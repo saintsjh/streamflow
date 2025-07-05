@@ -1,0 +1,102 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with "go test -c"
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+tmp/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files (NEVER commit these)
+.env
+.env.*
+!.env.example
+.envrc
+
+# Project build
+main
+*templ.go
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+build-errors.log
+/logs/
+/log/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Storage directories with user content
+storage/uploads/
+storage/processed/
+storage/temp/
+storage/cache/
+
+# Live streaming files
+live/*/
+!live/.gitkeep
+
+# Certificates and keys
+*.key
+*.pem
+*.crt
+*.cert
+*.p12
+*.pfx
+
+# Configuration files that might contain secrets
+config.json
+secrets.json
+local.json
+*-local.json
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Coverage files
+coverage.out
+coverage.html
+coverage.xml
+
+# Air live reload
+/tmp/
+
+# Docker override files (keep main docker-compose.yml)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Local development files
+.local
+local/
+
