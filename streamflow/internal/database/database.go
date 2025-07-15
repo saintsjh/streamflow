@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -14,25 +13,27 @@ import (
 
 type Service interface {
 	Health() map[string]string
+	GetDatabase() *mongo.Database
 }
 
 type service struct {
 	db *mongo.Client
 }
 
-var (
-	host = os.Getenv("BLUEPRINT_DB_HOST")
-	port = os.Getenv("BLUEPRINT_DB_PORT")
-	//database = os.Getenv("BLUEPRINT_DB_DATABASE")
-)
-
 func New() Service {
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(fmt.Sprintf("mongodb://%s:%s", host, port)))
+	uri := os.Getenv("DB_URI")
+	if uri == "" {
+		log.Fatal("You must set your 'DB_URI' environment variable")
+	}
 
+	serverAPI := options.ServerAPI(options.ServerAPIVersion1)
+	opts := options.Client().ApplyURI(uri).SetServerAPIOptions(serverAPI)
+
+	client, err := mongo.Connect(context.TODO(), opts)
 	if err != nil {
 		log.Fatal(err)
-
 	}
+
 	return &service{
 		db: client,
 	}
@@ -50,4 +51,9 @@ func (s *service) Health() map[string]string {
 	return map[string]string{
 		"message": "It's healthy",
 	}
+}
+
+func (s *service) GetDatabase() *mongo.Database {
+	// Default database name - you can make this configurable
+	return s.db.Database("streamflow")
 }
