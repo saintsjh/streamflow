@@ -1,0 +1,65 @@
+package users
+
+import (
+	"context"
+    "errors"
+    "time"
+    "golang.org/x/crypto/bcrypt"
+    "go.mongodb.org/mongo-driver/bson"
+    "go.mongodb.org/mongo-driver/bson/primitive"
+    "go.mongodb.org/mongo-driver/mongo"
+)
+
+type UserService struct {
+	userCollection *mongo.Collection
+}
+
+func NewUSerSerivce(db *mongo.Database) *UserService {
+	return &UserService{
+		userCollection: db.Collection("users")
+	}
+}
+
+func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
+	var existingUser User
+	err := s.userCollection.FindOne(ctx, bson.M{"$or": []bson.M{
+		{"email": req.Email},
+		{"username": req.UserName},
+	}}).Decode(&existingUser)
+
+	if err == nil {
+		return nil, errors.New("user already exists")
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	user := User{
+		ID: primitive.NewObjectID(),
+		Email: req.Email,
+		Password: string(hashedPassword),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserName: req.UserName,
+	}
+
+	//inject user into database
+	_, err = s.userCollection.InsertOne(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+func (s *UserService) LoginUser(ctx context.Context, userID primitive.ObjectID)(*User, error) {
+	var user User
+	err := s.userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
