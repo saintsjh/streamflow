@@ -1,4 +1,4 @@
-// package video
+package video
 
 // import (
 // 	"github.com/gofiber/fiber/v2"
@@ -16,11 +16,11 @@
 // }
 
 // func (h *VideoHandler) UploadVideo(c *fiber.Ctx) error {
-	
+
 // }
 
 // func (h *VideoHandler) ListVideos(c *fiber.Ctx) error {
-	
+
 // }
 
 // func (h *VideoHandler) GetVideo(c *fiber.Ctx) error {

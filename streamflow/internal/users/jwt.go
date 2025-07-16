@@ -2,14 +2,14 @@ package users
 
 import (
 	"errors"
-    "time"
-    "github.com/golang-jwt/jwt/v5"
-    "go.mongodb.org/mongo-driver/bson/primitive"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type JWTClaims struct {
 	UserID primitive.ObjectID `json:"user_id"`
-
 	Email string `json: "email"`
 
 	jwt.RegisteredClaims

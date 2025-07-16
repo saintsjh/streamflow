@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"log"
+	"os"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -25,8 +26,11 @@ func mustStartMongoContainer() (func(context.Context, ...testcontainers.Terminat
 		return dbContainer.Terminate, err
 	}
 
-	host = dbHost
-	port = dbPort.Port()
+	host := dbHost
+	port := dbPort.Port()
+
+	os.Setenv("BLUEPRINT_DB_HOST", host)
+	os.Setenv("BLUEPRINT_DB_PORT", port)
 
 	return dbContainer.Terminate, err
 }

@@ -1,15 +1,14 @@
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "os/signal"
-    "streamflow/internal/config"
-    "streamflow/internal/server"
-    "syscall"
-    "time"
+	"context"
+	"fmt"
+	"log"
+	"os/signal"
+	"streamflow/internal/config"
+	"streamflow/internal/server"
+	"syscall"
+	"time"
 )
 
 func gracefulShutdown(fiberServer *server.FiberServer, done chan bool) {
@@ -39,7 +38,7 @@ func gracefulShutdown(fiberServer *server.FiberServer, done chan bool) {
 
 func main() {
     // Load configuration from environment variables
-    cfg, err := config.Load()
+    cfg, err := config.LoadConfig()
     if err != nil {
         log.Fatalf("Failed to load configuration: %v", err)
     }

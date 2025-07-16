@@ -1,13 +1,14 @@
-package config 
+package config
 
 import (
 	"fmt"
-    "os"
-    "strconv"
-    "time"
-    
-    // Import godotenv for loading .env files
-    _ "github.com/joho/godotenv/autoload"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	// Import godotenv for loading .env files
+	_ "github.com/joho/godotenv/autoload"
 )
 
 type Config struct {
@@ -90,11 +91,11 @@ func (c *Config) loadServerConfig() error {
 	}
 
 	c.Server = ServerConfig{
-		Port: port,
-		Host: getEnv("HOST", "0.0.0.0"),
-		ReadTimeout: getDuration("READ_TIMEOUT", 10*time.Second),
-		WriteTimeout: getDuration("WRITE_TIMEOUT", 10*time.Second),
-		IdleTimeout: getDuration("IDLE_TIMEOUT", 10*time.Second),
+		Port:         port,
+		Host:         getEnv("HOST", "0.0.0.0"),
+		ReadTimeout:  getDurationEnv("READ_TIMEOUT", 10*time.Second),
+		WriteTimeout: getDurationEnv("WRITE_TIMEOUT", 10*time.Second),
+		IdleTimeout:  getDurationEnv("IDLE_TIMEOUT", 10*time.Second),
 	}
 	return nil
 }
@@ -146,18 +147,18 @@ func (c *Config) loadVideoConfig() error {
 func (c *Config) loadSecurityConfig() error {
 	corsOriginsStr := getEnv("CORS_ORIGINS", "*")
 	var corsOrigins []string
-	if corsOriginStr != "*"{
-		for _, origin := range strings.Split(corsOriginStr, ","){
+	if corsOriginsStr != "*" {
+		for _, origin := range strings.Split(corsOriginsStr, ",") {
 			corsOrigins = append(corsOrigins, strings.TrimSpace(origin))
 		}
+	} else {
+		corsOrigins = []string{"*"}
 	}
-	else{
-		corseOrigins = []string{"*"}
-	}
-	c.Security = SecurityConfig {
+
+	c.Security = SecurityConfig{
 		CORSOrigins: corsOrigins,
-		RateLimit: getIntEnv("RATE_LIMIT", 100),
-		RateWindow: getDurationEnv("RATE_WINDOW", 1*time.Minute),
+		RateLimit:   getIntEnv("RATE_LIMIT", 100),
+		RateWindow:  getDurationEnv("RATE_WINDOW", 1*time.Minute),
 	}
 
 	return nil
@@ -171,8 +172,8 @@ func getEnv(key string, defaultValue string) string {
 }
 
 func getIntEnv(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != ""{
-		intValue, err := strconv.Atoi(value); err == nil{
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
 		}
 	}
@@ -180,8 +181,8 @@ func getIntEnv(key string, defaultValue int) int {
 }
 
 func getInt64Env(key string, defaultValue int64) int64 {
-	if value := os.Getenv(key); value != ""{
-		intValue, err := strconv.ParseInt(value, 10, 64); err == nil{
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
 			return intValue
 		}
 	}
@@ -189,8 +190,8 @@ func getInt64Env(key string, defaultValue int64) int64 {
 }
 
 func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != ""{
-		duration, err := time.ParseDuration(value); err == nil{
+	if value := os.Getenv(key); value != "" {
+		if duration, err := time.ParseDuration(value); err == nil {
 			return duration
 		}
 	}

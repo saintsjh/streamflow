@@ -2,12 +2,13 @@ package users
 
 import (
 	"context"
-    "errors"
-    "time"
-    "golang.org/x/crypto/bcrypt"
-    "go.mongodb.org/mongo-driver/bson"
-    "go.mongodb.org/mongo-driver/bson/primitive"
-    "go.mongodb.org/mongo-driver/mongo"
+	"errors"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserService struct {
@@ -16,7 +17,7 @@ type UserService struct {
 
 func NewUSerSerivce(db *mongo.Database) *UserService {
 	return &UserService{
-		userCollection: db.Collection("users")
+		userCollection: db.Collection("users"),
 	}
 }
 
@@ -51,7 +52,7 @@ func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*U
 		return nil, err
 	}
 
-	return user, nil
+	return &user, nil
 }
 
 func (s *UserService) AuthenticateUser(ctx context.Context, email, password string) (*User, error) {

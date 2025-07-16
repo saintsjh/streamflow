@@ -1,15 +1,14 @@
 package users
 
-import(
+import (
 	"strings"
-    "github.com/gofiber/fiber/v2"
-    "streamflow/internal/users"
-)
 
+	"github.com/gofiber/fiber/v2"
+)
 
 // authmiddleware is a middleware that checks if the user is authenticated
 // for protected routes
-func AuthMiddleware( jwtService *users.JWTService) fiber.Handler {
+func AuthMiddleware( jwtService *JWTService) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
@@ -36,7 +35,7 @@ func AuthMiddleware( jwtService *users.JWTService) fiber.Handler {
 
 		//set user_id in context for future use
 		c.Locals("user_id", claims.UserID)
-		c.locals("userEmail", claims.Email)
+		c.Locals("userEmail", claims.Email)
 
 		return c.Next()
 	}

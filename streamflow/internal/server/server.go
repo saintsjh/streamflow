@@ -1,13 +1,13 @@
 package server
 
 import (
+	"streamflow/internal/config"
+	"streamflow/internal/database"
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
-    "github.com/gofiber/fiber/v2/middleware/cors"
-    "github.com/gofiber/fiber/v2/middleware/limiter"
-    "time"
-    
-    "streamflow/internal/config"
-    "streamflow/internal/database"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 )
 
 type FiberServer struct {
@@ -16,7 +16,7 @@ type FiberServer struct {
 	db database.Service
 }
 
-func New() *FiberServer {
+func New(cfg *config.Config) *FiberServer {
 	app := fiber.New(fiber.Config{
 		ServerHeader: "streamflow",
         AppName:      "streamflow",
@@ -27,7 +27,7 @@ func New() *FiberServer {
 
 	server := &FiberServer{
 		App: app,
-		cfg:cfg.
+		cfg:cfg,
 		db: database.New(),
 	}
 	server.applyMiddleware()
@@ -44,7 +44,7 @@ func (s *FiberServer) applyMiddleware(){
         MaxAge:           300,
 	}))
 
-	s.App.User(limiter.New(limiter.Config{
+	s.App.Use(limiter.New(limiter.Config{
 		Max:        s.cfg.Security.RateLimit,
         Expiration: s.cfg.Security.RateWindow,
         KeyGenerator: func(c *fiber.Ctx) string {

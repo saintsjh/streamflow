@@ -2,25 +2,25 @@ package users
 
 import (
 	"github.com/gofiber/fiber/v2"
-    "streamflow/internal/users"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type UserHandler struct {
-	userService *users.UserService
+	userService *UserService
 
-	jwtService *users.JWTService
+	jwtService *JWTService
 }
 
 // This is a constructor that injects dependencies
-func NewUserHandler(userService *users.UserService, jwtService *users.JWTService) *UserHandler {
-    return &UserHandler{
-        userService: userService,
-        jwtService:  jwtService,
-    }
+func NewUserHandler(userService *UserService, jwtService *JWTService) *UserHandler {
+	return &UserHandler{
+		userService: userService,
+		jwtService:  jwtService,
+	}
 }
 
 func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
-	var user users.CreateUserRequest
+	var user CreateUserRequest
 
 	if err := c.BodyParser(&user); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -29,7 +29,7 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 	}
 
 	//call service to create user
-	user, err := h.userService.CreateUser(c.Context(), user)
+	createdUser, err := h.userService.CreateUser(c.Context(), user)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to create user",
@@ -37,7 +37,7 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 	}
 
 	//generate JWT token
-	token, err := h.jwtService.GenerateToken(user)
+	token, err := h.jwtService.GenerateToken(createdUser)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate token",
@@ -46,20 +46,20 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message": "User created successfully",
-		"token": token,
-		"user": *user,
+		"token":   token,
+		"user":    *createdUser,
 	})
 }
 
 func (h *UserHandler) LoginUser(c *fiber.Ctx) error {
-	var req users.LoginUserRequest
+	var req LoginUserRequest
 
-	if err := c.BodyParser(&req): err != nil{
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid request body",
 		})
 	}
-	
+
 	//authenticate user
 	user, err := h.userService.AuthenticateUser(c.Context(), req.Email, req.Password)
 	if err != nil {
@@ -70,7 +70,7 @@ func (h *UserHandler) LoginUser(c *fiber.Ctx) error {
 
 	//generate JWT token for the authenticated user
 	token, err := h.jwtService.GenerateToken(user)
-		if err != nil {
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate token",
 		})
@@ -78,13 +78,19 @@ func (h *UserHandler) LoginUser(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message": "Login successful",
-		"token": token,
-		"user": *user,
+		"token":   token,
+		"user":    *user,
 	})
 }
 
 func (h *UserHandler) GetUser(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(string)
+	userIDStr := c.Locals("user_id").(string)
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid user ID",
+		})
+	}
 
 	user, err := h.userService.GetUserByID(c.Context(), userID)
 	if err != nil {

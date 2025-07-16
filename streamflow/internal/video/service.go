@@ -32,7 +32,6 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 		ID:          videoID,
 		Title:       title,
 		Description: description,
-		UploaderID:  uploaderID,
 		Status:      StatusPending,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
