@@ -54,8 +54,29 @@ func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*U
 	return user, nil
 }
 
-func (s *UserService) LoginUser(ctx context.Context, userID primitive.ObjectID)(*User, error) {
-	var user User
+func (s *UserService) AuthenticateUser(ctx context.Context, email, password string) (*User, error) {
+    var user User
+    // Find user by email (email is unique)
+    err := s.userCollection.FindOne(ctx, bson.M{"email": email}).Decode(&user)
+    if err != nil {
+        // Don't specify whether email or password is wrong for security
+        return nil, errors.New("invalid credentials")
+    }
+    
+    // Compare the provided password with the stored hash
+    // bcrypt.CompareHashAndPassword handles the comparison securely
+    err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+    if err != nil {
+        // Password doesn't match
+        return nil, errors.New("invalid credentials")
+    }
+    
+    return &user, nil
+}
+
+//get user 
+func (s *UserService) GetUserByID(ctx context.Context, userID primitive.ObjectID) (*User, error){
+	var user User 
 	err := s.userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		return nil, err
