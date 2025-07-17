@@ -2,8 +2,10 @@ package users
 
 import (
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -42,7 +44,7 @@ func (s *JWTService) GenerateToken(user *User) (string, error){
 	return token.SignedString(s.secretKey)
 }
 
-func (s *JWTService) VerifyToken(tokenString string) (*JWTClaims, error) {
+func (s *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		return s.secretKey, nil
 	})
@@ -56,4 +58,40 @@ func (s *JWTService) VerifyToken(tokenString string) (*JWTClaims, error) {
 	}
 
 	return nil, errors.New("invalid token")
+}
+
+func (s *JWTService) AuthMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Get Authorization header
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Authorization header is required",
+			})
+		}
+
+		// Check if it's a Bearer token
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid authorization header format",
+			})
+		}
+
+		// Extract token
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Validate token
+		claims, err := s.ValidateToken(token)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid or expired token",
+			})
+		}
+
+		// Set user ID in context
+		c.Locals("user_id", claims.UserID)
+		c.Locals("user_email", claims.Email)
+
+		return c.Next()
+	}
 }

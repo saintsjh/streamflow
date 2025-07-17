@@ -1,38 +1,61 @@
 package server
 
 import (
-	"streamflow/internal/config"
-	"streamflow/internal/database"
-	"strings"
-
+	"context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"strings"
+	"streamflow/internal/config"
+	"streamflow/internal/database"
+	"streamflow/internal/users"
+	"streamflow/internal/video"
+	"streamflow/internal/livestream"
 )
 
 type FiberServer struct {
-	*fiber.App
-	cfg *config.Config
-	db database.Service
+	App             *fiber.App
+	db              database.Service
+	userService     *users.UserService
+	jwtService      *users.JWTService
+	videoService    *video.VideoService
+	livestreamService *livestream.LivestreamService
+	cfg             *config.Config
 }
 
 func New(cfg *config.Config) *FiberServer {
 	app := fiber.New(fiber.Config{
-		ServerHeader: "streamflow",
-        AppName:      "streamflow",
-        ReadTimeout:  cfg.Server.ReadTimeout,
-        WriteTimeout: cfg.Server.WriteTimeout,
-        IdleTimeout:  cfg.Server.IdleTimeout,
+		ErrorHandler: customErrorHandler,
 	})
+
+	db := database.New()
+	userService := users.NewUserService(db.GetDatabase())
+	jwtService := users.NewJWTService(cfg.JWT.SecretKey)
+	videoService := video.NewVideoService(db.GetDatabase())
+	livestreamService := livestream.NewLivestreamService(db.GetDatabase())
 
 	server := &FiberServer{
 		App: app,
-		cfg:cfg,
-		db: database.New(),
+		db: db,
+		userService: userService,
+		jwtService: jwtService,
+		videoService: videoService,
+		livestreamService: livestreamService,
+		cfg: cfg,
 	}
+
+	// Apply middleware
 	server.applyMiddleware()
 
 	return server
+}
+
+func (s *FiberServer) Listen(addr string) error {
+	return s.App.Listen(addr)
+}
+
+func (s *FiberServer) ShutdownWithContext(ctx context.Context) error {
+	return s.App.ShutdownWithContext(ctx)
 }
 
 func (s *FiberServer) applyMiddleware(){
@@ -51,4 +74,22 @@ func (s *FiberServer) applyMiddleware(){
             return c.IP() // limit by IP address
 		},
 	}))
+}
+
+// AuthMiddleware returns the authentication middleware
+func (s *FiberServer) authMiddleware(c *fiber.Ctx) error {
+	return s.jwtService.AuthMiddleware()(c)
+}
+
+// Custom error handler
+func customErrorHandler(c *fiber.Ctx, err error) error {
+	code := fiber.StatusInternalServerError
+
+	if e, ok := err.(*fiber.Error); ok {
+		code = e.Code
+	}
+
+	return c.Status(code).JSON(fiber.Map{
+		"error": err.Error(),
+	})
 }

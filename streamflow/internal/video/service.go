@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -35,8 +36,15 @@ func NewVideoService(db *mongo.Database) *VideoService {
 func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, description string, userID primitive.ObjectID) (*Video, error) {
 	videoID := primitive.NewObjectID()
 	rawFilePath := fmt.Sprintf("storage/uploads/%s.mp4", videoID.Hex())
+	thumbnailPath := fmt.Sprintf("storage/cache/thumbnails/%s.jpg", videoID.Hex())
 
-	// Assuming the Video struct has a UserID field of type primitive.ObjectID.
+	// Create upload directory if it doesn't exist
+	uploadDir := filepath.Dir(rawFilePath)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create upload directory: %w", err)
+	}
+
+	// Create new video document
 	newVideo := &Video{
 		ID:          videoID,
 		Title:       title,
@@ -44,8 +52,11 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 		Status:      StatusPending,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
+		UserID:      userID,
+		FilePath:    rawFilePath,
 	}
 
+	// Save the uploaded file
 	outFile, err := os.Create(rawFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create raw file: %w", err)
@@ -54,15 +65,48 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 
 	_, err = io.Copy(outFile, file)
 	if err != nil {
-		os.Remove(rawFilePath) // Clean up the created file if copy fails.
+		CleanupFailedUpload(rawFilePath)
 		return nil, fmt.Errorf("failed to save file: %w", err)
 	}
 
+	// Detect corrupt video file
+	if err := DetectCorruptVideo(rawFilePath); err != nil {
+		CleanupFailedUpload(rawFilePath)
+		return nil, fmt.Errorf("video file validation failed: %w", err)
+	}
+
+	// Extract video metadata
+	metadata, err := ExtractVideoMetadata(rawFilePath)
+	if err != nil {
+		CleanupFailedUpload(rawFilePath)
+		return nil, fmt.Errorf("failed to extract video metadata: %w", err)
+	}
+
+	// Validate extracted metadata
+	if err := ValidateVideoMetadata(metadata); err != nil {
+		CleanupFailedUpload(rawFilePath)
+		return nil, fmt.Errorf("video metadata validation failed: %w", err)
+	}
+
+	// Generate thumbnail
+	if err := GenerateThumbnail(rawFilePath, thumbnailPath); err != nil {
+		log.Printf("Failed to generate thumbnail for video %s: %v", videoID.Hex(), err)
+		// Don't fail the upload if thumbnail generation fails
+	} else {
+		newVideo.ThumbnailPath = thumbnailPath
+	}
+
+	// Store metadata in video document
+	newVideo.Metadata = *metadata
+
+	// Insert video document into database
 	_, err = s.videoCollection.InsertOne(ctx, newVideo)
 	if err != nil {
-		os.Remove(rawFilePath) // Clean up the created file if database insert fails.
-		return nil, err
+		CleanupFailedUpload(rawFilePath, thumbnailPath)
+		return nil, fmt.Errorf("failed to save video to database: %w", err)
 	}
+
+	// Start transcoding in background
 	go s.startTranscoding(newVideo.ID, rawFilePath)
 
 	return newVideo, nil
@@ -71,7 +115,7 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile string) {
 	ctx := context.Background()
 
-	//update video status to processing
+	// Update video status to processing
 	_, err := s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, bson.M{"$set": bson.M{"status": StatusProcessing}})
 	if err != nil {
 		log.Printf("Error updating video status to processing: %v", err)
@@ -79,25 +123,40 @@ func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile stri
 	}
 
 	outputDir := fmt.Sprintf("storage/processed/%s", videoID.Hex())
-	os.MkdirAll(outputDir, os.ModePerm)
-	hlsPlaylist := fmt.Sprintf("%s/playlist.m3u8", outputDir)
-
-	cmd := exec.Command("ffmpeg", "-i", rawFile, "-c:v", "libx264", "-c:a", "aac", "-hls_time", "10", "-hls_list_size", "0", "-f", "hls", hlsPlaylist)
-
-	if err := cmd.Run(); err != nil {
-		log.Printf("Error transcoding video: %v", err)
-		s.videoCollection.UpdateOne(context.Background(), bson.M{"_id": videoID}, bson.M{"$set": bson.M{"status": StatusFailed}})
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		log.Printf("Error creating output directory: %v", err)
+		s.updateVideoStatus(ctx, videoID, StatusFailed, "Failed to create output directory")
 		return
 	}
 
+	hlsPlaylist := fmt.Sprintf("%s/playlist.m3u8", outputDir)
+
+	// Enhanced ffmpeg command with multiple quality levels
+	cmd := exec.Command("ffmpeg",
+		"-i", rawFile,
+		"-c:v", "libx264",
+		"-c:a", "aac",
+		"-hls_time", "10",
+		"-hls_list_size", "0",
+		"-hls_segment_filename", fmt.Sprintf("%s/segment_%%03d.ts", outputDir),
+		"-f", "hls",
+		hlsPlaylist)
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("Error transcoding video: %v", err)
+		s.updateVideoStatus(ctx, videoID, StatusFailed, fmt.Sprintf("Transcoding failed: %v", err))
+		return
+	}
+
+	// Update video with HLS path and completed status
 	update := bson.M{
 		"$set": bson.M{
-			"status":  StatusCompleted,
-			"hlsPath": hlsPlaylist,
+			"status":   StatusCompleted,
+			"hlsPath":  hlsPlaylist,
+			"updatedAt": time.Now(),
 		},
 	}
 
-	//update video status to completed
 	_, err = s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, update)
 	if err != nil {
 		log.Printf("Error updating video status to completed: %v", err)
@@ -105,6 +164,22 @@ func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile stri
 	}
 
 	log.Printf("Video transcoded successfully: %s", videoID.Hex())
+}
+
+// updateVideoStatus is a helper method to update video status with error message
+func (s *VideoService) updateVideoStatus(ctx context.Context, videoID primitive.ObjectID, status VideoStatus, errorMsg string) {
+	update := bson.M{
+		"$set": bson.M{
+			"status":   status,
+			"error":    errorMsg,
+			"updatedAt": time.Now(),
+		},
+	}
+
+	_, err := s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, update)
+	if err != nil {
+		log.Printf("Error updating video status: %v", err)
+	}
 }
 
 // GetVideoByID retrieves a single video by its ID.
@@ -180,19 +255,29 @@ func (s *VideoService) DeleteVideo(ctx context.Context, id primitive.ObjectID) e
 		return err
 	}
 
-	// Delete the raw video file.
-	rawFilePath := fmt.Sprintf("storage/uploads/%s.mp4", video.ID.Hex())
-	if err := os.Remove(rawFilePath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Failed to delete raw video file %s: %v", rawFilePath, err)
+	// Delete the raw video file
+	if video.FilePath != "" {
+		if err := os.Remove(video.FilePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete raw video file %s: %v", video.FilePath, err)
+		}
 	}
 
-	// Delete the processed HLS files directory.
-	processedDir := fmt.Sprintf("storage/processed/%s", video.ID.Hex())
-	if err := os.RemoveAll(processedDir); err != nil && !os.IsNotExist(err) {
-		log.Printf("Failed to delete processed video directory %s: %v", processedDir, err)
+	// Delete the thumbnail file
+	if video.ThumbnailPath != "" {
+		if err := os.Remove(video.ThumbnailPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete thumbnail file %s: %v", video.ThumbnailPath, err)
+		}
 	}
 
-	// Delete the video record from the database.
+	// Delete the processed HLS files directory
+	if video.HLSPath != "" {
+		processedDir := filepath.Dir(video.HLSPath)
+		if err := os.RemoveAll(processedDir); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete processed video directory %s: %v", processedDir, err)
+		}
+	}
+
+	// Delete the video record from the database
 	_, err = s.videoCollection.DeleteOne(ctx, bson.M{"_id": id})
 	if err != nil {
 		return fmt.Errorf("failed to delete video record: %w", err)

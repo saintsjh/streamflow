@@ -17,13 +17,14 @@ func AuthMiddleware( jwtService *JWTService) fiber.Handler {
 			})
 		}
 
-		//extract token from header if it exists
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if token == authHeader {
+		if !strings.HasPrefix(authHeader, "Bearer ") {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error":"Invalid token format",
+				"error": "Invalid authorization header format",
 			})
 		}
+		
+		//extract token from header if it exists
+		token := strings.TrimPrefix(authHeader, "Bearer ")
 
 		//verify token
 		claims, err := jwtService.VerifyToken(token)
