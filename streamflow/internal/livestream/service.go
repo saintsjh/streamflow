@@ -37,7 +37,7 @@ func (s* LivestreamService) StartStream(userID primitive.ObjectID, req StartStre
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	_, err := s.livestreamCollection.InsertOne(ctx, livestream)
+	_, err := s.livestreamCollection.InsertOne(context.Background(), livestream)
 	if err != nil {
 		return nil, err
 	}
@@ -54,38 +54,38 @@ func (s* LivestreamService) StopStream(userID primitive.ObjectID, streamID primi
 			"updatedAt": now,
 		},
 	}
-	result, err := s.livestreamCollection.UpdateOne(ctx,
+	result, err := s.livestreamCollection.UpdateOne(context.Background(),
 		bson.M{"_id": streamID, "user_id": userID},
 		update,)
 		if err != nil {
-			return fmt.Errorf("failed to stop stream: %w", err)
+			return nil, fmt.Errorf("failed to stop stream: %w", err)
 		}
 	
 		if result.MatchedCount == 0 {
-			return fmt.Errorf("stream not found or unauthorized")
+			return nil, fmt.Errorf("stream not found or unauthorized")
 		}
 	
-		return nil
+		return nil, nil
 }
 
-func (s* LivestreamService) GetStreamStatus(ctx context.Context, streamID primitive.ObjectID) (*Livestream, error) {
-	var livestreamream *Livestream
-	if err := s.livestreamCollection.FindOne(ctx, bson.M{"_id": streamID}).Decode(&livestream); err != nil {
+func (s* LivestreamService) GetStreamStatus(streamID primitive.ObjectID) (*Livestream, error) {
+	var livestream *Livestream
+	if err := s.livestreamCollection.FindOne(context.Background(), bson.M{"_id": streamID}).Decode(&livestream); err != nil {
 		return nil, err
 	}
 
 	return livestream, nil
 }
 
-func (s* LivestreamService) ListStreams(ctx context.Context) ([]*Livestream, error) {
-	cursor, err := s.livestreamCollection.Find(ctx, bson.M{"status": StreamStatusLive})
+func (s* LivestreamService) ListStreams() ([]*Livestream, error) {
+	cursor, err := s.livestreamCollection.Find(context.Background(), bson.M{"status": StreamStatusLive})
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	defer cursor.Close(context.Background())
 	
 	var streams []*Livestream
-	if err := cursor.All(ctx, &streams); err != nil {
+	if err := cursor.All(context.Background(), &streams); err != nil {
 		return streams, nil
 	}
 

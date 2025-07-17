@@ -95,3 +95,19 @@ func (s *JWTService) AuthMiddleware() fiber.Handler {
 		return c.Next()
 	}
 }
+
+func (s *JWTService) VerifyToken(tokenString string) (*JWTClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return s.secretKey, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*JWTClaims); ok && token.Valid {
+		return claims, nil
+	}
+
+	return nil, errors.New("invalid token")
+}

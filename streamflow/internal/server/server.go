@@ -2,15 +2,16 @@ package server
 
 import (
 	"context"
+	"streamflow/internal/config"
+	"streamflow/internal/database"
+	"streamflow/internal/livestream"
+	"streamflow/internal/users"
+	"streamflow/internal/video"
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
-	"strings"
-	"streamflow/internal/config"
-	"streamflow/internal/database"
-	"streamflow/internal/users"
-	"streamflow/internal/video"
-	"streamflow/internal/livestream"
 )
 
 type FiberServer struct {
@@ -32,7 +33,7 @@ func New(cfg *config.Config) *FiberServer {
 	userService := users.NewUserService(db.GetDatabase())
 	jwtService := users.NewJWTService(cfg.JWT.SecretKey)
 	videoService := video.NewVideoService(db.GetDatabase())
-	livestreamService := livestream.NewLivestreamService(db.GetDatabase())
+	livestreamService := livestream.NewLiveStreamService(db.GetDatabase())
 
 	server := &FiberServer{
 		App: app,

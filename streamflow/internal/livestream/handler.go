@@ -51,7 +51,8 @@ func (h *LivestreamHandler) StopStream(c* fiber.Ctx) error {
 			"error": "Invalid stream ID",
 		})
 	}
-	if err := h.livestreamService.StopStream(userID, streamID); err != nil {
+	_, err = h.livestreamService.StopStream(userID, streamID)
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to stop stream",
 		})
@@ -68,7 +69,7 @@ func (h *LivestreamHandler) GetStreamStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	status, err := h.livestreamService.GetStreamStatus(c.Context(), streamID)
+	status, err := h.livestreamService.GetStreamStatus(streamID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to get stream status",
@@ -79,7 +80,7 @@ func (h *LivestreamHandler) GetStreamStatus(c *fiber.Ctx) error {
 }
 
 func (h *LivestreamHandler) ListStreams(c *fiber.Ctx) error {
-	streams, err := h.livestreamService.ListStreams(c.Context())
+	streams, err := h.livestreamService.ListStreams()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to list streams",

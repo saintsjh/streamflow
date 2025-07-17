@@ -15,7 +15,7 @@ type UserService struct {
 	userCollection *mongo.Collection
 }
 
-func NewUSerSerivce(db *mongo.Database) *UserService {
+func NewUserService(db *mongo.Database) *UserService {
 	return &UserService{
 		userCollection: db.Collection("users"),
 	}

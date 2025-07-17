@@ -2,10 +2,8 @@ package video
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"mime/multipart"
 	"os"
