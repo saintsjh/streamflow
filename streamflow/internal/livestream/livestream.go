@@ -32,3 +32,10 @@ type StartStreamRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
+
+type ChatCollection struct {
+	LivestreamID primitive.ObjectID `bson:"livestream_id"`
+	Messages     []*ChatMessage     `bson:"messages"`
+	CreatedAt    time.Time          `bson:"created_at"`
+	UpdatedAt    time.Time          `bson:"updated_at"`
+}
