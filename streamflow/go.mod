@@ -11,6 +11,15 @@ require (
 )
 
 require (
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.0 // indirect
+	github.com/mitchellh/mapstructure v1.4.1 // indirect
+	github.com/yutopp/go-amf0 v0.1.1 // indirect
+	github.com/yutopp/go-flv v0.3.1 // indirect
+	github.com/yutopp/go-rtmp v0.0.7 // indirect
+)
+
+require (
 	dario.cat/mergo v1.0.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
