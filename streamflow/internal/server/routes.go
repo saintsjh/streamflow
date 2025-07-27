@@ -1,11 +1,12 @@
 package server
 
 import (
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	"streamflow/internal/livestream"
 	"streamflow/internal/users"
 	"streamflow/internal/video"
-	"streamflow/internal/livestream"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
@@ -36,6 +37,8 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	videoHandler := video.NewVideoHandler(s.videoService)
 	api.Post("/video/upload", videoHandler.UploadVideo)
 	api.Get("/video/list", videoHandler.ListVideos)
+	api.Get("/video/popular", videoHandler.GetPopularVideos)
+	api.Get("/video/trending", videoHandler.GetTrendingVideos)
 	api.Get("/video/:id", videoHandler.GetVideo)
 	api.Put("/video/:id", videoHandler.UpdateVideo)
 	api.Delete("/video/:id", videoHandler.DeleteVideo)
@@ -52,6 +55,8 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	api.Post("/livestream/stop", livestreamHandler.StopStream)
 	api.Get("/livestream/status/:id", livestreamHandler.GetStreamStatus)
 	api.Get("/livestream/streams", livestreamHandler.ListStreams)
+	api.Get("/livestream/popular", livestreamHandler.GetPopularStreams)
+	api.Get("/livestream/search", livestreamHandler.SearchStreams)
 }
 
 func (s *FiberServer) HelloWorldHandler(c *fiber.Ctx) error {

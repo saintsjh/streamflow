@@ -2,6 +2,7 @@ package video
 
 import (
 	"time"
+
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -33,6 +34,7 @@ type Video struct {
 	CreatedAt   time.Time          `bson:"created_at"`
 	UpdatedAt   time.Time          `bson:"updated_at"`
 	UserID      primitive.ObjectID `bson:"user_id"`
+	ViewCount   int64              `bson:"view_count"`
 	FilePath    string             `bson:"file_path"`     // Path to original uploaded file
 	HLSPath     string             `bson:"hls_path"`      // Path to HLS playlist
 	ThumbnailPath string           `bson:"thumbnail_path"` // Path to thumbnail image

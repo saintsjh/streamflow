@@ -1,6 +1,8 @@
 package livestream
 
 import (
+	"strconv"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -109,6 +111,20 @@ func (h *LivestreamHandler) SearchStreams(c *fiber.Ctx) error {
 	streams, err := h.livestreamService.SearchStreams(query)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not perform search"})
+	}
+	return c.Status(fiber.StatusOK).JSON(streams)
+}
+
+// GetPopularStreams handles requests to get streams ordered by viewer count
+func (h *LivestreamHandler) GetPopularStreams(c *fiber.Ctx) error {
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+	if limit > 50 {
+		limit = 50 // Cap at 50 to prevent abuse  
+	}
+	
+	streams, err := h.livestreamService.GetPopularStreams(limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not fetch popular streams"})
 	}
 	return c.Status(fiber.StatusOK).JSON(streams)
 }

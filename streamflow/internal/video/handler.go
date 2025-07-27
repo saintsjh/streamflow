@@ -1,6 +1,7 @@
 package video
 
 import (
+	"log"
 	"path/filepath"
 	"strconv"
 
@@ -132,6 +133,13 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Video stream not available"})
 	}
 
+	// Increment view count when someone starts watching (async to not block streaming)
+	go func() {
+		if err := h.videoService.IncrementViewCount(c.Context(), videoID); err != nil {
+			log.Printf("Failed to increment view count for video %s: %v", videoID.Hex(), err)
+		}
+	}()
+
 	// Get seek time from query parameter (in seconds)
 	seekTimeStr := c.Query("t", "")
 	var seekTime float64
@@ -256,4 +264,39 @@ func (h *VideoHandler) GetVideoTimestamp(c *fiber.Ctx) error {
 		"remaining": video.Metadata.Duration - currentTime,
 		"progress_percentage": (currentTime / video.Metadata.Duration) * 100,
 	})
+}
+
+// GetPopularVideos returns the most viewed videos
+func (h *VideoHandler) GetPopularVideos(c *fiber.Ctx) error {
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+	if limit > 50 {
+		limit = 50 // Cap at 50 to prevent abuse
+	}
+	
+	videos, err := h.videoService.GetPopularVideos(c.Context(), limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get popular videos"})
+	}
+	
+	return c.Status(fiber.StatusOK).JSON(videos)
+}
+
+// GetTrendingVideos returns trending videos (recent + high views)
+func (h *VideoHandler) GetTrendingVideos(c *fiber.Ctx) error {
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+	if limit > 50 {
+		limit = 50 // Cap at 50 to prevent abuse
+	}
+	
+	daysBack, _ := strconv.Atoi(c.Query("days", "7"))
+	if daysBack > 30 {
+		daysBack = 30 // Cap at 30 days
+	}
+	
+	videos, err := h.videoService.GetTrendingVideos(c.Context(), limit, daysBack)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get trending videos"})
+	}
+	
+	return c.Status(fiber.StatusOK).JSON(videos)
 }

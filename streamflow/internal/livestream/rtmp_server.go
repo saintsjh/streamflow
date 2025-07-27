@@ -1,135 +1,85 @@
 package livestream
 
 import (
+	"bytes"
 	"fmt"
-	"io"
 	"log"
-	"net"
-	"time"
+	"os"
+	"path/filepath"
 
 	"github.com/pkg/errors"
+	"github.com/yutopp/go-flv"
+	flvtag "github.com/yutopp/go-flv/tag"
 	"github.com/yutopp/go-rtmp"
-	"github.com/yutopp/go-rtmp/message"
+	rtmpmsg "github.com/yutopp/go-rtmp/message"
 )
-
-type RTMPServer struct {
-	server        *rtmp.Server
-	port          string
-	streamManager *StreamManager
-}
 
 type RTMPServerHandler struct {
 	rtmp.DefaultHandler
-	streamManager *StreamManager
-	conn          net.Conn // Store the connection to identify it on close
-	streamKey     string   // Add this field to store the key upon successful publish
+	flvFile *os.File
+	flvEnc  *flv.Encoder
 }
 
-// NewRTMPServer creates a new RTMP server instance
-func NewRTMPServer(port string, sm *StreamManager) *RTMPServer {
-	return &RTMPServer{
-		port:          port,
-		streamManager: sm,
-	}
+func (h *RTMPServerHandler) OnServe(conn *rtmp.Conn)  {
 }
 
-// Start initializes and starts the RTMP server
-func (s *RTMPServer) Start() error {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", s.port))
-	if err != nil {
-		return err
-	}
-
-	config := &rtmp.ServerConfig{
-		OnConnect: func(conn net.Conn) (io.ReadWriteCloser, *rtmp.ConnConfig) {
-			handler := &RTMPServerHandler{
-				streamManager: s.streamManager,
-				conn:          conn,
-			}
-			return conn, &rtmp.ConnConfig{
-				Handler: handler,
-			}
-		},
-	}
-	s.server = rtmp.NewServer(config)
-
-	log.Printf("Starting RTMP server on %s", listener.Addr())
-	return s.server.Serve(listener)
-}
-
-func (h *RTMPServerHandler) OnPublish(ctx *rtmp.StreamContext, timestamp uint32, cmd *message.NetStreamPublish) error {
-	streamKey := cmd.PublishingName
-	log.Printf("RTMP: Publish request for stream key: %s", streamKey)
-
-	if streamKey == "" {
-		return errors.New("rtmp: publishing name is required")
-	}
-
-	stream, err := h.streamManager.livestreamService.GetStreamByKey(streamKey)
-	if err != nil || stream.Status != StreamStatusLive {
-		return errors.New("rtmp: invalid or inactive stream key")
-	}
-
-	// Start stream management
-	h.streamManager.HandleStreamStart(streamKey, stream.ID)
-
-	// Get the tracks from the manager to verify they were created
-	videoTrack, audioTrack := h.streamManager.GetStreamTracks(streamKey)
-	if videoTrack == nil || audioTrack == nil {
-		return errors.New("rtmp: failed to create tracks")
-	}
-
-	h.streamKey = streamKey
+func (h *RTMPServerHandler) OnConnect(timestamp uint32, cmd *rtmpmsg.NetConnectionConnect) error {
+	log.Printf("RTMP connection established from %s", cmd)
 	return nil
 }
 
-func (h *RTMPServerHandler) OnVideo(timestamp uint32, reader io.Reader) error {
-	if h.streamKey == "" {
-		return nil // Not ready yet
+func (h *RTMPServerHandler) OnPublish(_ *rtmp.StreamContext, timestamp uint32, cmd *rtmpmsg.NetStreamPublish) error {
+	log.Printf("RTMP publish from %s", cmd)
+	if cmd.PublishingName == "" {
+		return errors.New("publishing name is required")
 	}
-
-	// Read all data from the reader
-	data, err := io.ReadAll(reader)
+	p := filepath.Join(
+		os.TempDir(),
+		filepath.Clean(filepath.Join("/", fmt.Sprintf("%s.flv", cmd.PublishingName))),
+	)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to open file")
 	}
+	defer f.Close()
 
-	return h.streamManager.WriteVideoSample(h.streamKey, data, time.Second/30)
-}
+	h.flvFile = f
 
-func (h *RTMPServerHandler) OnAudio(timestamp uint32, reader io.Reader) error {
-	if h.streamKey == "" {
-		return nil // Not ready yet
-	}
-
-	// Read all data from the reader
-	data, err := io.ReadAll(reader)
+	enc, err := flv.NewEncoder(f, flv.FlagsAudio|flv.FlagsVideo)
 	if err != nil {
-		return err
+		_ = f.Close()
+		return errors.Wrap(err, "Failed to create flv encoder") 
 	}
-
-	return h.streamManager.WriteAudioSample(h.streamKey, data, time.Millisecond*20)
-}
-
-func (h *RTMPServerHandler) OnPlay(ctx *rtmp.StreamContext, timestamp uint32, cmd *message.NetStreamPlay) error {
-	streamKey := cmd.StreamName
-	log.Printf("RTMP: Play request for stream key: %s", streamKey)
-
-	// Delegate viewer join event to the manager.
-	h.streamManager.HandleViewerJoin(streamKey)
-
+	h.flvEnc = enc
 	return nil
 }
 
-func (h *RTMPServerHandler) OnClose() {
-	log.Printf("RTMP: Connection closed from %s", h.conn.RemoteAddr().String())
+func (h *RTMPServerHandler) OnPlay(timestamp uint32, cmd *rtmpmsg.NetStreamPlay) error {
+	log.Printf("RTMP play from %s", cmd)
+	return nil
+}
 
-	// If a streamKey was associated with this connection, it means it was a publishing connection.
-	if h.streamKey != "" {
-		log.Printf("RTMP: Publisher for stream key '%s' has disconnected.", h.streamKey)
-		// Delegate the end-of-stream logic to the manager.
-		h.streamManager.HandleStreamEnd(h.streamKey)
-	} else {
-		log.Printf("RTMP: A viewer/non-publishing connection has closed.")
+func (h *RTMPServerHandler) OnCreateStream(timestamp uint32, cmd *rtmpmsg.NetConnectionCreateStream) error {
+	log.Printf("RTMP create stream from %s", cmd)
+	return nil
+}
+
+func (h *RTMPServerHandler) OnSetDataFrame(timestamp uint32, data *rtmpmsg.NetStreamSetDataFrame) error {
+	r := bytes.NewReader(data.Payload)
+
+	var script flvtag.ScriptData
+	if err := flvtag.DecodeScriptData(r, &script); err != nil {
+		return errors.Wrap(err, "failed to decode script data")
 	}
+	log.Printf("RTMP script data: %+v", script)
+
+	if err := h.flvEnc.Encode(&flvtag.FlvTag{
+		TagType: flvtag.TagTypeScriptData,
+		Timestamp: timestamp,
+		Data: &script,
+	}); err != nil {
+		return errors.Wrap(err, "failed to write script data tag")
+	}
+
+	return nil
 }

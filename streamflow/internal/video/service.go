@@ -286,4 +286,69 @@ func (s *VideoService) DeleteVideo(ctx context.Context, id primitive.ObjectID) e
 	return nil
 }
 
+// IncrementViewCount increments the view count for a video when it's watched
+func (s *VideoService) IncrementViewCount(ctx context.Context, videoID primitive.ObjectID) error {
+	update := bson.M{"$inc": bson.M{"view_count": 1}}
+	
+	result, err := s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, update)
+	if err != nil {
+		return fmt.Errorf("failed to increment view count: %w", err)
+	}
+	
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("video not found")
+	}
+	
+	return nil
+}
+
+// GetPopularVideos returns videos ordered by view count (most viewed first)
+func (s *VideoService) GetPopularVideos(ctx context.Context, limit int) ([]*Video, error) {
+	opts := options.Find().
+		SetSort(bson.D{{Key: "view_count", Value: -1}}).
+		SetLimit(int64(limit))
+	
+	cursor, err := s.videoCollection.Find(ctx, bson.M{"status": StatusCompleted}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	
+	var videos []*Video
+	if err = cursor.All(ctx, &videos); err != nil {
+		return nil, err
+	}
+	return videos, nil
+}
+
+// GetTrendingVideos returns recently uploaded videos with high view counts
+func (s *VideoService) GetTrendingVideos(ctx context.Context, limit int, daysBack int) ([]*Video, error) {
+	// Calculate date threshold (e.g., videos from last 7 days)
+	threshold := time.Now().AddDate(0, 0, -daysBack)
+	
+	opts := options.Find().
+		SetSort(bson.D{
+			{Key: "view_count", Value: -1},
+			{Key: "created_at", Value: -1},
+		}).
+		SetLimit(int64(limit))
+	
+	filter := bson.M{
+		"status": StatusCompleted,
+		"created_at": bson.M{"$gte": threshold},
+	}
+	
+	cursor, err := s.videoCollection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	
+	var videos []*Video
+	if err = cursor.All(ctx, &videos); err != nil {
+		return nil, err
+	}
+	return videos, nil
+}
+
 
