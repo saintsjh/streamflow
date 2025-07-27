@@ -37,6 +37,7 @@ require (
 	github.com/savsgio/gotils v0.0.0-20230208104028-c358bd845dee // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect
 	github.com/yutopp/go-amf0 v0.1.1 // indirect
+	go.mongodb.org/mongo-driver/v2 v2.2.2 // indirect
 	golang.org/x/net v0.40.0 // indirect
 )
 

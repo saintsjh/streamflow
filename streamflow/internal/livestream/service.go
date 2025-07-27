@@ -59,9 +59,9 @@ func (s *LivestreamService) StopStream(userID primitive.ObjectID, streamID primi
 	now := time.Now()
 	update := bson.M{
 		"$set": bson.M{
-			"status":    StreamStatusEnded,
-			"endedAt":   now,
-			"updatedAt": now,
+			"status":     StreamStatusEnded,
+			"ended_at":   now,
+			"updated_at": now,
 		},
 	}
 	result, err := s.livestreamCollection.UpdateOne(context.Background(),

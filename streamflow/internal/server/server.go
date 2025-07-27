@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"streamflow/internal/config"
 	"streamflow/internal/database"
 	"streamflow/internal/livestream"
@@ -15,13 +16,13 @@ import (
 )
 
 type FiberServer struct {
-	App             *fiber.App
-	db              database.Service
-	userService     *users.UserService
-	jwtService      *users.JWTService
-	videoService    *video.VideoService
+	App               *fiber.App
+	db                database.Service
+	userService       *users.UserService
+	jwtService        *users.JWTService
+	videoService      *video.VideoService
 	livestreamService *livestream.LivestreamService
-	cfg             *config.Config
+	cfg               *config.Config
 }
 
 func New(cfg *config.Config) *FiberServer {
@@ -36,13 +37,13 @@ func New(cfg *config.Config) *FiberServer {
 	livestreamService := livestream.NewLiveStreamService(db.GetDatabase())
 
 	server := &FiberServer{
-		App: app,
-		db: db,
-		userService: userService,
-		jwtService: jwtService,
-		videoService: videoService,
+		App:               app,
+		db:                db,
+		userService:       userService,
+		jwtService:        jwtService,
+		videoService:      videoService,
 		livestreamService: livestreamService,
-		cfg: cfg,
+		cfg:               cfg,
 	}
 
 	// Apply middleware
@@ -56,23 +57,31 @@ func (s *FiberServer) Listen(addr string) error {
 }
 
 func (s *FiberServer) ShutdownWithContext(ctx context.Context) error {
+	// Close database connection first
+	if err := s.db.Close(); err != nil {
+		log.Printf("Error closing database connection: %v", err)
+	} else {
+		log.Println("Database connection closed successfully")
+	}
+
+	// Then shutdown the Fiber app
 	return s.App.ShutdownWithContext(ctx)
 }
 
-func (s *FiberServer) applyMiddleware(){
+func (s *FiberServer) applyMiddleware() {
 	s.App.Use(cors.New(cors.Config{
 		AllowOrigins:     strings.Join(s.cfg.Security.CORSOrigins, ","),
-        AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
-        AllowHeaders:     "Accept,Authorization,Content-Type",
-        AllowCredentials: false,
-        MaxAge:           300,
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
+		AllowHeaders:     "Accept,Authorization,Content-Type",
+		AllowCredentials: false,
+		MaxAge:           300,
 	}))
 
 	s.App.Use(limiter.New(limiter.Config{
 		Max:        s.cfg.Security.RateLimit,
-        Expiration: s.cfg.Security.RateWindow,
-        KeyGenerator: func(c *fiber.Ctx) string {
-            return c.IP() // limit by IP address
+		Expiration: s.cfg.Security.RateWindow,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP() // limit by IP address
 		},
 	}))
 }
