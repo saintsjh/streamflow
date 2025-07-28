@@ -19,6 +19,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 // Types based on backend livestream struct
 type LivestreamData = {
@@ -103,7 +104,8 @@ export default function LivestreamScreen() {
     setIsConnecting(true);
     
     try {
-      const wsUrl = `ws://localhost:8080/ws?stream_id=${id}`;
+      const apiBaseUrl = Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL;
+      const wsUrl = `${apiBaseUrl?.replace('http', 'ws')}/ws?stream_id=${id}`;
       wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
@@ -158,7 +160,7 @@ export default function LivestreamScreen() {
         return;
       }
 
-      const response = await fetch(`http://localhost:8080/api/livestream/status/${id}`, {
+      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/status/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },

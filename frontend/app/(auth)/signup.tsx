@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 const Signup = () => {
   const [email, setEmail] = useState('');
@@ -20,14 +21,14 @@ const Signup = () => {
     setIsLoading(true);
     try {
       // Call backend signup API
-      const response = await fetch('http://localhost:8080/user/register', {
+      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/user/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           email: email.trim(),
-          userName: username.trim(),
+          user_name: username.trim(),
           password: password,
         }),
       });
@@ -36,7 +37,7 @@ const Signup = () => {
 
       if (response.ok && result.token) {
         await signup(result.token);
-        // Navigation will be handled automatically by the root layout
+        
       } else {
         throw new Error(result.error || 'Registration failed');
       }

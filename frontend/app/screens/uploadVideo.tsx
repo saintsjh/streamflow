@@ -17,6 +17,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 // Types based on backend validation
 type VideoUploadData = {
@@ -133,7 +134,7 @@ export default function UploadVideoScreen() {
         name: uploadData.videoFile!.name || 'video.mp4',
       } as any);
 
-      const response = await fetch('http://localhost:8080/api/video/upload', {
+      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/upload`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

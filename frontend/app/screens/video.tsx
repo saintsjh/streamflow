@@ -18,6 +18,7 @@ import { Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 // Types based on backend video struct
 type VideoData = {
@@ -97,7 +98,7 @@ export default function VideoScreen() {
         return;
       }
 
-      const response = await fetch(`http://localhost:8080/api/video/${id}`, {
+      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -138,7 +139,7 @@ export default function VideoScreen() {
       try {
         const token = await AsyncStorage.getItem('userToken');
         if (token) {
-          await fetch(`http://localhost:8080/video/${id}/timestamp?current=${time}`, {
+          await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/video/${id}/timestamp?current=${time}`, {
             headers: { 'Authorization': `Bearer ${token}` },
           });
         }
@@ -240,7 +241,7 @@ export default function VideoScreen() {
             <Video
               ref={videoRef}
               style={styles.video}
-              source={{ uri: `http://localhost:8080/stream/${id}` }}
+              source={{ uri: `${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/stream/${id}` }}
               shouldPlay={false}
               isLooping={false}
               resizeMode={ResizeMode.CONTAIN}

@@ -1,12 +1,14 @@
 package server
 
 import (
+	"log"
 	"streamflow/internal/livestream"
 	"streamflow/internal/users"
 	"streamflow/internal/video"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/websocket/v2"
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
@@ -57,6 +59,26 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	api.Get("/livestream/streams", livestreamHandler.ListStreams)
 	api.Get("/livestream/popular", livestreamHandler.GetPopularStreams)
 	api.Get("/livestream/search", livestreamHandler.SearchStreams)
+
+	// WebSocket route for livestreaming
+	hub := livestream.NewWebSocketHub()
+	go hub.Run()
+	streamManager := livestream.NewStreamManager(s.livestreamService)
+	webRTCManager, err := livestream.NewWebRTCManager(streamManager)
+	if err != nil {
+		log.Printf("Failed to create WebRTC manager: %v", err)
+		return
+	}
+	wsHandler := livestream.NewWebSocketHandler(hub, s.livestreamService, webRTCManager)
+	
+	s.App.Use("/ws", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+	s.App.Get("/ws", websocket.New(wsHandler.ServeHTTP))
 }
 
 func (s *FiberServer) HelloWorldHandler(c *fiber.Ctx) error {

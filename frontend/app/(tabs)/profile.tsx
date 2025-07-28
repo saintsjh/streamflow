@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 const { width } = Dimensions.get('window');
 
@@ -115,10 +116,10 @@ export default function ProfileScreen() {
 
       // Load user profile and their videos in parallel
       const [userResponse, videosResponse] = await Promise.all([
-        fetch('http://localhost:8080/api/user/me', {
+        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/user/me`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
-        fetch('http://localhost:8080/api/video/list?page=1&limit=50', {
+        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/list?page=1&limit=50`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
       ]);

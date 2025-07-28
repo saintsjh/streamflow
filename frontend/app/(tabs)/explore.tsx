@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, FlatList, TouchableOpacity, Dimensi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 const { width } = Dimensions.get('window');
 
@@ -124,10 +125,10 @@ export default function ExploreScreen() {
 
       // Load livestreams and videos in parallel
       const [streamsResponse, videosResponse] = await Promise.all([
-        fetch('http://localhost:8080/api/livestream/streams', {
+        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/streams`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
-        fetch('http://localhost:8080/api/video/list?page=1&limit=20', {
+        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/list?page=1&limit=20`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
       ]);

@@ -17,6 +17,7 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
+import Constants from 'expo-constants';
 
 // Types based on backend structs
 type StreamConfigurationData = {
@@ -117,7 +118,7 @@ export default function StreamConfigurationScreen() {
         return;
       }
 
-      const response = await fetch('http://localhost:8080/api/livestream/start', {
+      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/start`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -139,7 +140,7 @@ export default function StreamConfigurationScreen() {
             {
               text: 'Start Broadcasting',
               onPress: () => {
-                router.push(`/screens/livestream?id=${result.ID}`);
+                router.push(`/screens/livestreamBroadcast?id=${result.ID}`);
               },
             },
           ]

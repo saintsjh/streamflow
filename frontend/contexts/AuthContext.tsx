@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 
 type AuthContextType = {
   isAuthenticated: boolean;
@@ -64,6 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await AsyncStorage.setItem('userToken', token);
       setIsAuthenticated(true);
       console.log('AuthContext: User signed up successfully');
+      router.replace('/(tabs)');
     } catch (error) {
       console.error('Error storing token:', error);
       throw error;

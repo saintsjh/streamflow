@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
+import Constants from 'expo-constants';
 
 const { width } = Dimensions.get('window');
 
@@ -151,10 +152,10 @@ export default function HomeScreen() {
 
       // Load trending videos and popular streams in parallel
       const [trendingVideosResponse, popularStreamsResponse] = await Promise.all([
-        fetch('http://localhost:8080/api/video/trending?limit=10', {
+        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/trending?limit=10`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
-        fetch('http://localhost:8080/api/livestream/popular?limit=5', {
+        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/popular?limit=5`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
       ]);
@@ -163,28 +164,32 @@ export default function HomeScreen() {
 
       if (trendingVideosResponse.ok) {
         const videosData = await trendingVideosResponse.json();
-        const formattedVideos = videosData.map((video: any) => ({
-          id: video.ID,
-          title: video.Title,
-          views: video.ViewCount || 0,
-          trending: true,
-          duration: Math.floor(video.Metadata?.Duration || 0),
-          type: 'video',
-        }));
-        trendingData.push(...formattedVideos);
+        if (videosData && Array.isArray(videosData)) {
+          const formattedVideos = videosData.map((video: any) => ({
+            id: video.ID,
+            title: video.Title,
+            views: video.ViewCount || 0,
+            trending: true,
+            duration: Math.floor(video.Metadata?.Duration || 0),
+            type: 'video',
+          }));
+          trendingData.push(...formattedVideos);
+        }
       }
 
       if (popularStreamsResponse.ok) {
         const streamsData = await popularStreamsResponse.json();
-        const formattedStreams = streamsData.map((stream: any) => ({
-          id: stream.ID,
-          title: stream.Title,
-          views: stream.ViewerCount || 0,
-          trending: true,
-          duration: 'LIVE',
-          type: 'stream',
-        }));
-        trendingData.push(...formattedStreams);
+        if (streamsData && Array.isArray(streamsData)) {
+          const formattedStreams = streamsData.map((stream: any) => ({
+            id: stream.ID,
+            title: stream.Title,
+            views: stream.ViewerCount || 0,
+            trending: true,
+            duration: 'LIVE',
+            type: 'stream',
+          }));
+          trendingData.push(...formattedStreams);
+        }
       }
 
       if (trendingData.length > 0) {
