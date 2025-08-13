@@ -15,11 +15,12 @@ import { Camera, CameraType, CameraView } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
-import Constants from 'expo-constants';
+import axios from 'axios';
 import {
   StreamMessageType,
   createStreamMessage
 } from '@/utils/streamUtils';
+import { API_BASE_URL } from '@/config/api';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -51,7 +52,7 @@ export default function LivestreamBroadcastScreen() {
   const cameraRef = useRef<CameraView>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const streamStartTime = useRef<Date | null>(null);
-  const durationInterval = useRef<NodeJS.Timeout | null>(null);
+  const durationInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     requestPermissions();
@@ -119,23 +120,18 @@ export default function LivestreamBroadcastScreen() {
         return;
       }
 
-      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/status/${id}`, {
+      const response = await axios.get(`${API_BASE_URL}/api/livestream/status/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
 
-      if (response.ok) {
-        const streamData = await response.json();
-        setStream(streamData);
-        if (streamData.Status === 'LIVE') {
-          setStreamStatus('LIVE');
-          connectWebSocket();
-        }
-      } else {
-        throw new Error('Failed to load stream details');
+      setStream(response.data);
+      if (response.data.Status === 'LIVE') {
+        setStreamStatus('LIVE');
+        connectWebSocket();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading stream:', error);
       setStreamStatus('ERROR');
     } finally {
@@ -145,8 +141,7 @@ export default function LivestreamBroadcastScreen() {
 
   const connectWebSocket = () => {
     try {
-      const apiBaseUrl = Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL;
-      const wsUrl = `${apiBaseUrl?.replace('http', 'ws')}/ws?stream_id=${id}`;
+      const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws?stream_id=${id}`;
       wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
@@ -219,6 +214,10 @@ export default function LivestreamBroadcastScreen() {
 
       const recording = await cameraRef.current.recordAsync(recordingOptions);
       
+      if (!recording) {
+        throw new Error('Failed to start recording');
+      }
+      
       // In a real implementation, you would stream this data via WebRTC
       console.log('Recording started, video will be saved to:', recording.uri);
       
@@ -276,8 +275,7 @@ export default function LivestreamBroadcastScreen() {
               
               const token = await AsyncStorage.getItem('userToken');
               if (token) {
-                await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/stop/${id}`, {
-                  method: 'POST',
+                await axios.post(`${API_BASE_URL}/api/livestream/stop/${id}`, {}, {
                   headers: {
                     'Authorization': `Bearer ${token}`,
                   },
@@ -286,9 +284,10 @@ export default function LivestreamBroadcastScreen() {
               
               setStreamStatus('STOPPED');
               router.back();
-            } catch (error) {
+            } catch (error: any) {
               console.error('Error ending stream:', error);
-              Alert.alert('Error', 'Failed to end stream properly.');
+              const errorMessage = error.response?.data?.error || 'Failed to end stream properly.';
+              Alert.alert('Error', errorMessage);
             }
           },
         },
@@ -469,7 +468,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     padding: 20,
     paddingTop: 60,
-    background: 'linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 100%)',
+    // background: 'linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 100%)',
   },
   streamInfo: {
     alignItems: 'flex-start',
@@ -514,7 +513,7 @@ const styles = StyleSheet.create({
     right: 0,
     padding: 20,
     paddingBottom: 40,
-    background: 'linear-gradient(0deg, rgba(0,0,0,0.6) 0%, transparent 100%)',
+    // background: 'linear-gradient(0deg, rgba(0,0,0,0.6) 0%, transparent 100%)',
   },
   streamStats: {
     marginBottom: 20,

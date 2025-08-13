@@ -17,7 +17,8 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
-import Constants from 'expo-constants';
+import axios from 'axios';
+import { API_BASE_URL } from '@/config/api';
 
 // Types based on backend structs
 type StreamConfigurationData = {
@@ -118,20 +119,12 @@ export default function StreamConfigurationScreen() {
         return;
       }
 
-      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/start`, {
-        method: 'POST',
+      const response = await axios.post(`${API_BASE_URL}/api/livestream/start`, streamRequest, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(streamRequest),
       });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to start stream');
-      }
       
               Alert.alert(
           'Stream Starting! 🎉',
@@ -140,16 +133,17 @@ export default function StreamConfigurationScreen() {
             {
               text: 'Start Broadcasting',
               onPress: () => {
-                router.push(`/screens/livestreamBroadcast?id=${result.ID}`);
+                router.push(`/screens/livestreamBroadcast?id=${response.data.ID}`);
               },
             },
           ]
         );
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error starting stream:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to start your stream. Please check your connection and try again.';
       Alert.alert(
         'Stream Error',
-        'Failed to start your stream. Please check your connection and try again.',
+        errorMessage,
         [{ text: 'OK' }]
       );
     } finally {

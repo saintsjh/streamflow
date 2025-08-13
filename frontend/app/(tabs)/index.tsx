@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
-import Constants from 'expo-constants';
+import axios from 'axios';
+import { API_BASE_URL } from '@/config/api';
 
 const { width } = Dimensions.get('window');
 
@@ -48,6 +49,22 @@ const formatViews = (views: number) => {
   if (views >= 1000000) return `${(views / 1000000).toFixed(1)}M`;
   if (views >= 1000) return `${(views / 1000).toFixed(1)}K`;
   return views.toString();
+};
+
+// Helper function to format duration from seconds to MM:SS or HH:MM:SS
+const formatDuration = (seconds: number | string) => {
+  if (typeof seconds === 'string') return seconds;
+  if (!seconds || seconds === 0) return '0:00';
+  
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+  }
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
 const formatTimeAgo = (dateString: string) => {
@@ -104,12 +121,24 @@ export default function HomeScreen() {
   const [recentlyViewed, setRecentlyViewed] = useState(mockRecentlyViewed);
   const [trendingContent, setTrendingContent] = useState(mockTrendingContent);
   const [isLoading, setIsLoading] = useState(true);
+  const [backendConnected, setBackendConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
     // Update time every minute for dynamic greeting
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 60000);
+
+    // Check backend connection status
+    const checkConnection = async () => {
+      try {
+        await axios.get(`${API_BASE_URL}/health`, { timeout: 5000 });
+        setBackendConnected(true);
+      } catch {
+        setBackendConnected(false);
+      }
+    };
+    checkConnection();
 
     // Load recently viewed content from AsyncStorage
     loadRecentlyViewed();
@@ -149,54 +178,67 @@ export default function HomeScreen() {
         setIsLoading(false);
         return;
       }
+      
+      // Check backend connection first
+      try {
+        await axios.get(`${API_BASE_URL}/health`, { timeout: 5000 });
+      } catch (error) {
+        console.warn('Backend is not reachable at:', API_BASE_URL);
+        console.log('Using mock data due to backend connectivity issues');
+        setIsLoading(false);
+        return;
+      }
 
-      // Load trending videos and popular streams in parallel
-      const [trendingVideosResponse, popularStreamsResponse] = await Promise.all([
-        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/trending?limit=10`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+      // Load trending videos and popular streams in parallel using axios
+      const [videosData, streamsData] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/api/video/trending?limit=10`, {
+          headers: { 'Authorization': `Bearer ${token}` }
         }),
-        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/popular?limit=5`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+        axios.get(`${API_BASE_URL}/api/livestream/popular?limit=5`, {
+          headers: { 'Authorization': `Bearer ${token}` }
         }),
       ]);
 
       const trendingData = [];
 
-      if (trendingVideosResponse.ok) {
-        const videosData = await trendingVideosResponse.json();
-        if (videosData && Array.isArray(videosData)) {
-          const formattedVideos = videosData.map((video: any) => ({
-            id: video.ID,
-            title: video.Title,
-            views: video.ViewCount || 0,
-            trending: true,
-            duration: Math.floor(video.Metadata?.Duration || 0),
-            type: 'video',
-          }));
-          trendingData.push(...formattedVideos);
-        }
+      // Process videos data
+      if (videosData.status === 'fulfilled' && videosData.value.data) {
+        const formattedVideos = videosData.value.data.map((video: any) => ({
+          id: video.ID || video.id,
+          title: video.Title || video.title,
+          views: video.ViewCount || video.views || 0,
+          trending: true,
+          duration: formatDuration(video.Metadata?.Duration || video.duration || 0),
+          type: 'video',
+        }));
+        trendingData.push(...formattedVideos);
+      } else if (videosData.status === 'rejected') {
+        console.warn('Failed to load trending videos:', videosData.reason?.message || 'Unknown error');
       }
 
-      if (popularStreamsResponse.ok) {
-        const streamsData = await popularStreamsResponse.json();
-        if (streamsData && Array.isArray(streamsData)) {
-          const formattedStreams = streamsData.map((stream: any) => ({
-            id: stream.ID,
-            title: stream.Title,
-            views: stream.ViewerCount || 0,
-            trending: true,
-            duration: 'LIVE',
-            type: 'stream',
-          }));
-          trendingData.push(...formattedStreams);
-        }
+      // Process streams data
+      if (streamsData.status === 'fulfilled' && streamsData.value.data) {
+        const formattedStreams = streamsData.value.data.map((stream: any) => ({
+          id: stream.ID || stream.id,
+          title: stream.Title || stream.title,
+          views: stream.ViewerCount || stream.viewerCount || stream.views || 0,
+          trending: true,
+          duration: 'LIVE',
+          type: 'stream',
+        }));
+        trendingData.push(...formattedStreams);
+      } else if (streamsData.status === 'rejected') {
+        console.warn('Failed to load popular streams:', streamsData.reason?.message || 'Unknown error');
       }
 
       if (trendingData.length > 0) {
         setTrendingContent(trendingData);
+      } else {
+        console.log('No trending content available from API, keeping mock data');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading trending content:', error);
+      // Don't throw the error, just log it and continue with mock data
     } finally {
       setIsLoading(false);
     }
@@ -265,6 +307,11 @@ export default function HomeScreen() {
               day: 'numeric' 
             })}
           </Text>
+          {backendConnected !== null && (
+            <Text style={[styles.connectionStatus, { color: backendConnected ? '#34C759' : '#FF3B30' }]}>
+              Backend: {backendConnected ? 'Connected' : 'Offline'} ({API_BASE_URL})
+            </Text>
+          )}
         </View>
 
         {/* Quick Action Buttons */}
@@ -404,6 +451,11 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 14,
     color: '#888',
+  },
+  connectionStatus: {
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '500',
   },
   quickActionsSection: {
     paddingHorizontal: 20,

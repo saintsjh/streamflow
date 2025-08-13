@@ -17,7 +17,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
-import Constants from 'expo-constants';
+import axios from 'axios';
+import { API_BASE_URL } from '@/config/api';
 
 // Types based on backend validation
 type VideoUploadData = {
@@ -134,18 +135,14 @@ export default function UploadVideoScreen() {
         name: uploadData.videoFile!.name || 'video.mp4',
       } as any);
 
-      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/upload`, {
-        method: 'POST',
+      const response = await axios.post(`${API_BASE_URL}/api/video/upload`, formData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'multipart/form-data',
         },
-        body: formData,
       });
 
-      const result = await response.json();
-
-      if (response.ok) {
+      if (response.status === 200) {
         Alert.alert(
           'Upload Successful! 🎉',
           `Your video "${uploadData.title}" has been uploaded successfully and will be processed shortly.`,
@@ -159,18 +156,19 @@ export default function UploadVideoScreen() {
           ]
         );
       } else {
-        throw new Error(result.error || 'Upload failed');
+        throw new Error(response.data.error || 'Upload failed');
       }
-    } catch (error) {
-      console.error('Error uploading video:', error);
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error || 'Failed to upload your video. Please check your connection and try again.';
       Alert.alert(
         'Upload Error',
-        'Failed to upload your video. Please check your connection and try again.',
+        errorMessage,
         [{ text: 'OK' }]
       );
     } finally {
       setIsLoading(false);
       setUploadProgress(0);
+      
     }
   };
 

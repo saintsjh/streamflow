@@ -3,34 +3,48 @@ package users
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type UserService struct {
 	userCollection *mongo.Collection
+	validator      *validator.Validate
 }
 
 func NewUserService(db *mongo.Database) *UserService {
-	return &UserService{
+	service := &UserService{
 		userCollection: db.Collection("users"),
+		validator:      validator.New(),
 	}
+	
+	// Create unique indexes for email and username to handle race conditions
+	service.createIndexes()
+	
+	return service
 }
 
 func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
-	var existingUser User
-	err := s.userCollection.FindOne(ctx, bson.M{"$or": []bson.M{
-		{"email": req.Email},
-		{"user_name": req.UserName},
-	}}).Decode(&existingUser)
-
-	if err == nil {
-		return nil, errors.New("user already exists")
+	// Validate request
+	if err := s.validator.Struct(req); err != nil {
+		return nil, err
 	}
+
+	// Additional validation for empty email (as expected by tests)
+	if strings.TrimSpace(req.Email) == "" {
+		return nil, errors.New("email is required")
+	}
+
+	// Normalize email to lowercase for consistency
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.UserName = strings.TrimSpace(req.UserName)
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -46,9 +60,14 @@ func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*U
 		UserName:  req.UserName,
 	}
 
-	//inject user into database
+	// Use InsertOne which will fail if unique constraints are violated
+	// This handles race conditions better than FindOne + InsertOne
 	_, err = s.userCollection.InsertOne(ctx, user)
 	if err != nil {
+		// Check if it's a duplicate key error
+		if mongo.IsDuplicateKeyError(err) {
+			return nil, errors.New("user already exists")
+		}
 		return nil, err
 	}
 
@@ -56,6 +75,9 @@ func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*U
 }
 
 func (s *UserService) AuthenticateUser(ctx context.Context, email, password string) (*User, error) {
+	// Normalize email to match creation logic
+	email = strings.ToLower(strings.TrimSpace(email))
+	
 	var user User
 	// Find user by email (email is unique)
 	err := s.userCollection.FindOne(ctx, bson.M{"email": email}).Decode(&user)
@@ -84,4 +106,24 @@ func (s *UserService) GetUserByID(ctx context.Context, userID primitive.ObjectID
 	}
 
 	return &user, nil
+}
+
+// createIndexes creates unique indexes for email and username to prevent duplicates
+func (s *UserService) createIndexes() {
+	ctx := context.Background()
+	
+	// Create unique index for email
+	emailIndex := mongo.IndexModel{
+		Keys:    bson.D{{"email", 1}},
+		Options: options.Index().SetUnique(true),
+	}
+	
+	// Create unique index for username
+	usernameIndex := mongo.IndexModel{
+		Keys:    bson.D{{"user_name", 1}},
+		Options: options.Index().SetUnique(true),
+	}
+	
+	// Create the indexes (ignore errors as they might already exist)
+	s.userCollection.Indexes().CreateMany(ctx, []mongo.IndexModel{emailIndex, usernameIndex})
 }

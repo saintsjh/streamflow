@@ -18,7 +18,8 @@ import { Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
-import Constants from 'expo-constants';
+import axios from 'axios';
+import { API_BASE_URL } from '@/config/api';
 
 // Types based on backend video struct
 type VideoData = {
@@ -98,22 +99,18 @@ export default function VideoScreen() {
         return;
       }
 
-      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/${id}`, {
+      const response = await axios.get(`${API_BASE_URL}/api/video/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
 
-      if (response.ok) {
-        const videoData = await response.json();
-        setVideo(videoData);
-        setDuration(videoData.Metadata.Duration);
-      } else {
-        throw new Error('Failed to load video');
-      }
-    } catch (error) {
+      setVideo(response.data);
+      setDuration(response.data.Metadata.Duration);
+    } catch (error: any) {
       console.error('Error loading video:', error);
-      Alert.alert('Error', 'Failed to load video. Please try again.');
+      const errorMessage = error.response?.data?.error || 'Failed to load video. Please try again.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -139,7 +136,7 @@ export default function VideoScreen() {
       try {
         const token = await AsyncStorage.getItem('userToken');
         if (token) {
-          await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/video/${id}/timestamp?current=${time}`, {
+          await axios.get(`${API_BASE_URL}/video/${id}/timestamp?current=${time}`, {
             headers: { 'Authorization': `Bearer ${token}` },
           });
         }
@@ -241,7 +238,7 @@ export default function VideoScreen() {
             <Video
               ref={videoRef}
               style={styles.video}
-              source={{ uri: `${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/stream/${id}` }}
+              source={{ uri: `${API_BASE_URL}/stream/${id}` }}
               shouldPlay={false}
               isLooping={false}
               resizeMode={ResizeMode.CONTAIN}

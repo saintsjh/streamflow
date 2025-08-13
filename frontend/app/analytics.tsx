@@ -1,9 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/contexts/AuthContext';
 import BackHeader from '@/components/BackHeader';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from '@/config/api';
 
+// Simple error handler for API errors
+const handleApiError = (error: any): string => {
+  if (error?.response?.data?.message) {
+    return error.response.data.message;
+  }
+  if (error?.message) {
+    return error.message;
+  }
+  return 'An unexpected error occurred';
+};
+        
 const { width } = Dimensions.get('window');
 
 // Mock analytics data - replace with actual API calls
@@ -117,11 +131,81 @@ const VideoPerformanceCard = ({ video }: any) => (
 export default function AnalyticsScreen() {
   const { logout } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState('7days');
+  const [analyticsData, setAnalyticsData] = useState(mockAnalyticsData);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    loadAnalyticsData();
+  }, []);
+
+  const loadAnalyticsData = async () => {
+    setIsLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      
+      // Load analytics data from multiple endpoints
+      const [overviewResponse, videosResponse, streamsResponse] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/api/analytics/overview`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}/api/analytics/videos`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}/api/analytics/streams`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+      ]);
+
+      const newAnalyticsData = { ...mockAnalyticsData };
+
+      // Update with real data if available
+      if (overviewResponse.status === 'fulfilled' && overviewResponse.value.data) {
+        newAnalyticsData.overview = {
+          ...newAnalyticsData.overview,
+          ...overviewResponse.value.data,
+        };
+      }
+
+      if (videosResponse.status === 'fulfilled' && videosResponse.value.data) {
+        newAnalyticsData.topVideos = videosResponse.value.data.topVideos || newAnalyticsData.topVideos;
+        newAnalyticsData.recentPerformance = videosResponse.value.data.recentPerformance || newAnalyticsData.recentPerformance;
+      }
+
+      if (streamsResponse.status === 'fulfilled' && streamsResponse.value.data) {
+        newAnalyticsData.streamStats = {
+          ...newAnalyticsData.streamStats,
+          ...streamsResponse.value.data,
+        };
+      }
+
+      setAnalyticsData(newAnalyticsData);
+    } catch (error: any) {
+      console.error('Error loading analytics data:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to load analytics data';
+      Alert.alert('Error', errorMessage);
+
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const refreshAnalytics = async () => {
+    setIsRefreshing(true);
+    try {
+      await loadAnalyticsData();
+      Alert.alert('Success', 'Analytics data refreshed!');
+    } catch (error) {
+      console.error('Error refreshing analytics:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const getPeriodData = () => {
     return selectedPeriod === '7days' 
-      ? mockAnalyticsData.recentPerformance.last7Days
-      : mockAnalyticsData.recentPerformance.last30Days;
+      ? analyticsData.recentPerformance.last7Days
+      : analyticsData.recentPerformance.last30Days;
   };
 
   const periodData = getPeriodData();
@@ -134,9 +218,14 @@ export default function AnalyticsScreen() {
         rightElement={
           <TouchableOpacity 
             style={styles.refreshButton}
-            onPress={() => Alert.alert('Refresh', 'Analytics data refreshed!')}
+            onPress={refreshAnalytics}
+            disabled={isRefreshing}
           >
-            <Text style={styles.refreshIcon}>↻</Text>
+            {isRefreshing ? (
+              <ActivityIndicator size="small" color="#007AFF" />
+            ) : (
+              <Text style={styles.refreshIcon}>↻</Text>
+            )}
           </TouchableOpacity>
         }
       />
@@ -167,26 +256,26 @@ export default function AnalyticsScreen() {
           <View style={styles.statsGrid}>
             <StatCard
               title="Total Views"
-              value={formatNumber(mockAnalyticsData.overview.totalViews)}
+              value={formatNumber(analyticsData.overview.totalViews)}
               subtitle="All time"
               color="#007AFF"
             />
             <StatCard
               title="Watch Time"
-              value={formatDuration(mockAnalyticsData.overview.totalWatchTime)}
+              value={formatDuration(analyticsData.overview.totalWatchTime)}
               subtitle="Total hours watched"
               color="#34C759"
             />
             <StatCard
               title="Subscribers"
-              value={formatNumber(mockAnalyticsData.overview.subscribers)}
+              value={formatNumber(analyticsData.overview.subscribers)}
               subtitle="Total subscribers"
               color="#FF9500"
             />
             <StatCard
               title="Content"
-              value={mockAnalyticsData.overview.totalVideos + mockAnalyticsData.overview.totalStreams}
-              subtitle={`${mockAnalyticsData.overview.totalVideos} videos, ${mockAnalyticsData.overview.totalStreams} streams`}
+              value={analyticsData.overview.totalVideos + analyticsData.overview.totalStreams}
+              subtitle={`${analyticsData.overview.totalVideos} videos, ${analyticsData.overview.totalStreams} streams`}
               color="#AF52DE"
             />
           </View>
@@ -223,9 +312,13 @@ export default function AnalyticsScreen() {
         {/* Top Performing Videos */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>🏆 Top Performing Content</Text>
-          {mockAnalyticsData.topVideos.map((video) => (
-            <VideoPerformanceCard key={video.id} video={video} />
-          ))}
+          {isLoading ? (
+            <ActivityIndicator size="large" color="#007AFF" style={styles.loadingIndicator} />
+          ) : (
+            analyticsData.topVideos.map((video) => (
+              <VideoPerformanceCard key={video.id} video={video} />
+            ))
+          )}
         </View>
 
         {/* Live Stream Analytics */}
@@ -234,25 +327,25 @@ export default function AnalyticsScreen() {
           <View style={styles.streamStatsGrid}>
             <StatCard
               title="Total Streams"
-              value={mockAnalyticsData.streamStats.totalStreams}
+              value={analyticsData.streamStats.totalStreams}
               subtitle="Streams completed"
               color="#FF3B30"
             />
             <StatCard
               title="Stream Time"
-              value={formatDuration(mockAnalyticsData.streamStats.totalStreamTime)}
+              value={formatDuration(analyticsData.streamStats.totalStreamTime)}
               subtitle="Total live time"
               color="#FF3B30"
             />
             <StatCard
               title="Avg Viewers"
-              value={mockAnalyticsData.streamStats.avgViewers}
-              subtitle={`Peak: ${mockAnalyticsData.streamStats.peakViewers}`}
+              value={analyticsData.streamStats.avgViewers}
+              subtitle={`Peak: ${analyticsData.streamStats.peakViewers}`}
               color="#FF3B30"
             />
             <StatCard
               title="Chat Messages"
-              value={formatNumber(mockAnalyticsData.streamStats.chatMessages)}
+              value={formatNumber(analyticsData.streamStats.chatMessages)}
               subtitle="Total engagement"
               color="#FF3B30"
             />
@@ -458,4 +551,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#007AFF',
   },
-}); 
+  loadingIndicator: {
+    marginVertical: 20,
+  },
+});

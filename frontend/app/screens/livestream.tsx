@@ -19,7 +19,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
-import Constants from 'expo-constants';
+import axios from 'axios';
+import { API_BASE_URL } from '@/config/api';
 
 // Types based on backend livestream struct
 type LivestreamData = {
@@ -72,7 +73,7 @@ export default function LivestreamScreen() {
   
   const wsRef = useRef<WebSocket | null>(null);
   const chatScrollRef = useRef<FlatList>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
   const MAX_RECONNECT_ATTEMPTS = 5;
 
@@ -104,8 +105,7 @@ export default function LivestreamScreen() {
     setIsConnecting(true);
     
     try {
-      const apiBaseUrl = Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL;
-      const wsUrl = `${apiBaseUrl?.replace('http', 'ws')}/ws?stream_id=${id}`;
+      const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws?stream_id=${id}`;
       wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
@@ -160,23 +160,19 @@ export default function LivestreamScreen() {
         return;
       }
 
-      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/livestream/status/${id}`, {
+      const response = await axios.get(`${API_BASE_URL}/api/livestream/status/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
 
-      if (response.ok) {
-        const streamData = await response.json();
-        setStream(streamData);
-        setViewerCount(streamData.ViewerCount || 0);
-        setIsStreamLive(streamData.Status === 'LIVE');
-      } else {
-        throw new Error('Failed to load stream');
-      }
-    } catch (error) {
+      setStream(response.data);
+      setViewerCount(response.data.ViewerCount || 0);
+      setIsStreamLive(response.data.Status === 'LIVE');
+    } catch (error: any) {
       console.error('Error loading stream:', error);
-      Alert.alert('Error', 'Failed to load stream. Please try again.');
+      const errorMessage = error.response?.data?.error || 'Failed to load stream. Please try again.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsLoading(false);
     }

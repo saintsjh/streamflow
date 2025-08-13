@@ -11,94 +11,63 @@ import (
 )
 
 type JWTClaims struct {
-	UserID primitive.ObjectID `json:"user_id"`
-	Email string `json: "email"`
-
+	UserID string `json:"user_id"`
 	jwt.RegisteredClaims
 }
 
 type JWTService struct {
-	secretKey []byte
+	secretKey string
 }
 
 func NewJWTService(secretKey string) *JWTService {
-	return &JWTService {
-		secretKey: []byte(secretKey),
-	}
+	return &JWTService{secretKey: secretKey}
 }
 
-func (s *JWTService) GenerateToken(user *User) (string, error){
+func (s *JWTService) GenerateToken(userID primitive.ObjectID) (string, error) {
 	claims := &JWTClaims{
-		UserID: user.ID, 
-		Email: user.Email,
+		UserID: userID.Hex(), // Store as hex string
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 24)),
-			IssuedAt: jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer: "streamflow",
-			Subject: user.ID.Hex(),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	return token.SignedString(s.secretKey)
+	return token.SignedString([]byte(s.secretKey))
 }
 
-func (s *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return s.secretKey, nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-	
-	if claims, ok := token.Claims.(*JWTClaims); ok && token.Valid{
-		return claims, nil
-	}
-
-	return nil, errors.New("invalid token")
-}
-
-func (s *JWTService) AuthMiddleware() fiber.Handler {
+func (s *JWTService) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Get Authorization header
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Authorization header is required",
-			})
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing or malformed JWT"})
 		}
 
-		// Check if it's a Bearer token
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Invalid authorization header format",
-			})
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing or malformed JWT"})
 		}
 
-		// Extract token
-		token := strings.TrimPrefix(authHeader, "Bearer ")
+		tokenString := parts[1]
 
-		// Validate token
-		claims, err := s.ValidateToken(token)
+		claims, err := s.verifyToken(tokenString)
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Invalid or expired token",
-			})
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid or expired JWT"})
 		}
 
-		// Set user ID in context
+		// Store the UserID as a string
 		c.Locals("user_id", claims.UserID)
-		c.Locals("user_email", claims.Email)
 
 		return c.Next()
 	}
 }
 
-func (s *JWTService) VerifyToken(tokenString string) (*JWTClaims, error) {
+func (s *JWTService) verifyToken(tokenString string) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return s.secretKey, nil
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(s.secretKey), nil
 	})
 
 	if err != nil {
@@ -110,4 +79,14 @@ func (s *JWTService) VerifyToken(tokenString string) (*JWTClaims, error) {
 	}
 
 	return nil, errors.New("invalid token")
+}
+
+// GetUserIDFromLocals retrieves the user ID from context and converts it to primitive.ObjectID
+func GetUserIDFromLocals(c *fiber.Ctx) (primitive.ObjectID, error) {
+	userIDStr, ok := c.Locals("user_id").(string)
+	if !ok {
+		return primitive.NilObjectID, errors.New("user_id not found in context or is not a string")
+	}
+
+	return primitive.ObjectIDFromHex(userIDStr)
 }

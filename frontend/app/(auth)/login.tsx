@@ -3,7 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
-import Constants from 'expo-constants';
+import axios from 'axios';
+  import { API_BASE_URL } from '@/config/api';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -12,38 +13,74 @@ const Login = () => {
   const { login } = useAuth();
 
   const handleLogin = async () => {
+    console.log('[LOGIN] Initiating login flow', { email: email ? '***@' + email.split('@')[1] : 'empty' });
+    
     if (!email || !password) {
+      console.log('[LOGIN] Validation failed - missing fields', { 
+        hasEmail: !!email, 
+        hasPassword: !!password 
+      });
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
+    console.log('[LOGIN] Starting authentication request');
     setIsLoading(true);
+    
+    const startTime = Date.now();
+    
     try {
-      // Call backend login API
-      const response = await fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/user/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: email.trim(),
-          password: password,
-        }),
+      console.log('[LOGIN] Making API request', { baseUrl: API_BASE_URL });
+      
+      const response = await axios.post(`${API_BASE_URL}/user/login`, {
+        email,
+        password,
       });
 
-      const result = await response.json();
+      const requestDuration = Date.now() - startTime;
+      console.log('[LOGIN] API response received', { 
+        status: response.status, 
+        hasToken: !!response.data.token,
+        duration: `${requestDuration}ms`
+      });
 
-      if (response.ok && result.token) {
-        await login(result.token);
+      if (response.data.token) {
+        console.log('[LOGIN] Token received, calling auth context login');
+        await login(response.data.token);
+        console.log('[LOGIN] Login successful, navigation will be handled by root layout');
         // Navigation will be handled automatically by the root layout
       } else {
-        throw new Error(result.error || 'Login failed');
+        console.error('[LOGIN] No token in response', { responseData: response.data });
+        throw new Error('Login failed');
       }
-    } catch (error) {
-      console.error('Login error:', error);
-      Alert.alert('Login Failed', error instanceof Error ? error.message : 'Please check your credentials and try again.');
+    } catch (error: any) {
+      const requestDuration = Date.now() - startTime;
+      
+      if (error.response) {
+        console.error('[LOGIN] HTTP error response', {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data,
+          duration: `${requestDuration}ms`
+        });
+      } else if (error.request) {
+        console.error('[LOGIN] Network error - no response received', {
+          message: error.message,
+          duration: `${requestDuration}ms`
+        });
+      } else {
+        console.error('[LOGIN] Request setup error', {
+          message: error.message,
+          duration: `${requestDuration}ms`
+        });
+      }
+      
+      const errorMessage = error.response?.data?.error || 'Invalid email or password';
+      console.log('[LOGIN] Showing error alert to user', { errorMessage });
+      Alert.alert('Login Failed', errorMessage);
     } finally {
       setIsLoading(false);
+      console.log('[LOGIN] Login flow completed');
     }
   };
 
@@ -85,7 +122,7 @@ const Login = () => {
               {isLoading ? 'Signing In...' : 'Sign In'}
             </Text>
           </TouchableOpacity>
-          <Text style={styles.signupText}>Don't have an account? </Text>
+          <Text style={styles.signupText}>Don&apos;t have an account? </Text>
           <TouchableOpacity 
             style={[styles.signupButton, isLoading && styles.buttonDisabled]}
             onPress={() => router.replace('/(auth)/signup')}

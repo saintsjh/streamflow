@@ -37,7 +37,7 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 	}
 
 	//generate JWT token
-	token, err := h.jwtService.GenerateToken(createdUser)
+	token, err := h.jwtService.GenerateToken(createdUser.ID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate token",
@@ -69,7 +69,7 @@ func (h *UserHandler) LoginUser(c *fiber.Ctx) error {
 	}
 
 	//generate JWT token for the authenticated user
-	token, err := h.jwtService.GenerateToken(user)
+	token, err := h.jwtService.GenerateToken(user.ID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate token",

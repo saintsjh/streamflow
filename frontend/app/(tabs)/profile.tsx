@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Dimensions
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
-import Constants from 'expo-constants';
+import axios from 'axios';
+import { API_BASE_URL } from '@/config/api';
 
 const { width } = Dimensions.get('window');
 
@@ -113,30 +114,27 @@ export default function ProfileScreen() {
         await logout();
         return;
       }
-
+      
       // Load user profile and their videos in parallel
       const [userResponse, videosResponse] = await Promise.all([
-        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/user/me`, {
+        axios.get(`${API_BASE_URL}/api/user/me`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
-        fetch(`${Constants.expoConfig?.extra?.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL}/api/video/list?page=1&limit=50`, {
+        axios.get(`${API_BASE_URL}/api/video/list?page=1&limit=50`, {
           headers: { 'Authorization': `Bearer ${token}` },
         }),
       ]);
 
-      let userID = null;
-      if (userResponse.ok) {
-        const userData = await userResponse.json();
-        userID = userData.ID;
-        setUser({
-          userName: userData.userName || userData.email.split('@')[0],
-          email: userData.email,
-          createdAt: userData.createdAt,
-        });
-      }
+      const userData = userResponse.data;
+      const userID = userData.ID;
+      setUser({
+        userName: userData.userName || userData.email.split('@')[0],
+        email: userData.email,
+        createdAt: userData.createdAt,
+      });
 
-      if (videosResponse.ok && userID) {
-        const videosData = await videosResponse.json();
+      if (userID) {
+        const videosData = videosResponse.data;
         // Filter to only show user's own videos and convert to frontend format
         const formattedVideos = videosData
           .filter((video: any) => video.UserID === userID)
@@ -150,9 +148,10 @@ export default function ProfileScreen() {
           }));
         setUserVideos(formattedVideos);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading user data:', error);
-      Alert.alert('Error', 'Failed to load profile data. Please try again.');
+      const errorMessage = error.response?.data?.error || 'Failed to load profile data. Please try again.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -448,4 +447,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 40,
   },
-}); 
+});

@@ -8,7 +8,6 @@ import (
 	"streamflow/internal/livestream"
 	"streamflow/internal/users"
 	"streamflow/internal/video"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -70,10 +69,12 @@ func (s *FiberServer) ShutdownWithContext(ctx context.Context) error {
 
 func (s *FiberServer) applyMiddleware() {
 	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     strings.Join(s.cfg.Security.CORSOrigins, ","),
+		AllowOriginsFunc: func(origin string) bool {
+			return true // Allow all origins for development
+		},
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
-		AllowHeaders:     "Accept,Authorization,Content-Type",
-		AllowCredentials: false,
+		AllowHeaders:     "Accept,Authorization,Content-Type,X-CSRF-Token",
+		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
@@ -88,7 +89,7 @@ func (s *FiberServer) applyMiddleware() {
 
 // AuthMiddleware returns the authentication middleware
 func (s *FiberServer) authMiddleware(c *fiber.Ctx) error {
-	return s.jwtService.AuthMiddleware()(c)
+	return s.jwtService.Middleware()(c)
 }
 
 // Custom error handler

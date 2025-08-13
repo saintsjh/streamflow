@@ -27,7 +27,7 @@ func AuthMiddleware( jwtService *JWTService) fiber.Handler {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
 		//verify token
-		claims, err := jwtService.VerifyToken(token)
+		claims, err := jwtService.verifyToken(token)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error":"Invalid token",
@@ -36,7 +36,7 @@ func AuthMiddleware( jwtService *JWTService) fiber.Handler {
 
 		//set user_id in context for future use
 		c.Locals("user_id", claims.UserID)
-		c.Locals("userEmail", claims.Email)
+		// c.Locals("userEmail", claims.Email)
 
 		return c.Next()
 	}
