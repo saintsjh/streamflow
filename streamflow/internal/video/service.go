@@ -8,11 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
+
+	"bytes"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/gridfs"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -24,27 +29,24 @@ type UpdateVideoRequest struct {
 
 type VideoService struct {
 	videoCollection *mongo.Collection
+	fs              *gridfs.Bucket
 }
 
 func NewVideoService(db *mongo.Database) *VideoService {
+	fs, err := gridfs.NewBucket(db)
+	if err != nil {
+		log.Fatalf("Failed to create GridFS bucket: %v", err)
+	}
+
 	return &VideoService{
 		videoCollection: db.Collection("videos"),
+		fs:              fs,
 	}
 }
 
 // CreateVideo now accepts a primitive.ObjectID for the userID and includes it in the new video document.
 func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, description string, userID primitive.ObjectID) (*Video, error) {
 	videoID := primitive.NewObjectID()
-	rawFilePath := fmt.Sprintf("storage/uploads/%s.mp4", videoID.Hex())
-	thumbnailPath := fmt.Sprintf("storage/cache/thumbnails/%s.jpg", videoID.Hex())
-
-	// Create upload directory if it doesn't exist
-	uploadDir := filepath.Dir(rawFilePath)
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create upload directory: %w", err)
-	}
-
-	// Create new video document
 	newVideo := &Video{
 		ID:          videoID,
 		Title:       title,
@@ -53,47 +55,62 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 		UserID:      userID,
-		FilePath:    rawFilePath,
+		FilePath:    fmt.Sprintf("%s.mp4", videoID.Hex()), // GridFS filename
 	}
 
-	// Save the uploaded file
-	outFile, err := os.Create(rawFilePath)
+	// TeeReader to write to both GridFS and a temporary local file
+	tempFilePath := fmt.Sprintf("storage/uploads/%s_temp.mp4", videoID.Hex())
+	if err := os.MkdirAll(filepath.Dir(tempFilePath), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create upload directory: %w", err)
+	}
+
+	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create raw file: %w", err)
+		return nil, fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	defer outFile.Close()
+	defer tempFile.Close()
 
-	_, err = io.Copy(outFile, file)
+	// Setup GridFS upload stream
+	uploadStream, err := s.fs.OpenUploadStreamWithID(videoID, newVideo.FilePath)
 	if err != nil {
-		CleanupFailedUpload(rawFilePath)
-		return nil, fmt.Errorf("failed to save file: %w", err)
+		return nil, fmt.Errorf("failed to open upload stream: %w", err)
+	}
+	defer uploadStream.Close()
+
+	// Use a TeeReader to write to both GridFS and the local file simultaneously
+	teeReader := io.TeeReader(file, tempFile)
+
+	if _, err := io.Copy(uploadStream, teeReader); err != nil {
+		CleanupFailedUpload(tempFilePath)
+		return nil, fmt.Errorf("failed to save file to GridFS and temp file: %w", err)
 	}
 
-	// Detect corrupt video file
-	if err := DetectCorruptVideo(rawFilePath); err != nil {
-		CleanupFailedUpload(rawFilePath)
+	// Detect corrupt video file from the temporary file
+	if err := DetectCorruptVideo(tempFilePath); err != nil {
+		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("video file validation failed: %w", err)
 	}
 
-	// Extract video metadata
-	metadata, err := ExtractVideoMetadata(rawFilePath)
+	// Extract video metadata from the temporary file
+	metadata, err := ExtractVideoMetadata(tempFilePath)
 	if err != nil {
-		CleanupFailedUpload(rawFilePath)
+		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("failed to extract video metadata: %w", err)
 	}
 
 	// Validate extracted metadata
 	if err := ValidateVideoMetadata(metadata); err != nil {
-		CleanupFailedUpload(rawFilePath)
+		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("video metadata validation failed: %w", err)
 	}
 
-	// Generate thumbnail
-	if err := GenerateThumbnail(rawFilePath, thumbnailPath); err != nil {
-		log.Printf("Failed to generate thumbnail for video %s: %v", videoID.Hex(), err)
-		// Don't fail the upload if thumbnail generation fails
+	// Generate thumbnail and upload to GridFS from the temporary file
+	thumbnailGridFSID, err := s.generateAndUploadThumbnail(tempFilePath, videoID)
+	if err != nil {
+		log.Printf("Failed to generate or upload thumbnail: %v", err)
+		// Don't fail the upload if thumbnail generation fails, but log it.
 	} else {
-		newVideo.ThumbnailPath = thumbnailPath
+		newVideo.ThumbnailPath = thumbnailGridFSID.Hex() // Store GridFS ID
 	}
 
 	// Store metadata in video document
@@ -102,14 +119,61 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 	// Insert video document into database
 	_, err = s.videoCollection.InsertOne(ctx, newVideo)
 	if err != nil {
-		CleanupFailedUpload(rawFilePath, thumbnailPath)
+		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("failed to save video to database: %w", err)
 	}
 
-	// Start transcoding in background
-	go s.startTranscoding(newVideo.ID, rawFilePath)
+	// Start transcoding in the background using the temporary file
+	go s.startTranscoding(videoID, tempFilePath)
 
 	return newVideo, nil
+}
+
+func (s *VideoService) generateAndUploadThumbnail(videoPath string, videoID primitive.ObjectID) (primitive.ObjectID, error) {
+	thumbnailID := primitive.NewObjectID()
+	thumbnailPath := fmt.Sprintf("storage/cache/thumbnails/%s.jpg", videoID.Hex())
+
+	// Create thumbnail directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(thumbnailPath), 0755); err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to create thumbnail directory: %w", err)
+	}
+
+	// Use ffmpeg to generate thumbnail
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-ss", "00:00:05",
+		"-vframes", "1",
+		"-vf", "scale=320:-1",
+		"-y",
+		thumbnailPath)
+
+	if err := cmd.Run(); err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to generate thumbnail: %w", err)
+	}
+
+	// Upload to GridFS
+	file, err := os.Open(thumbnailPath)
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to open thumbnail file for upload: %w", err)
+	}
+	defer file.Close()
+
+	uploadStream, err := s.fs.OpenUploadStreamWithID(thumbnailID, fmt.Sprintf("%s_thumbnail.jpg", videoID.Hex()))
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to open GridFS upload stream for thumbnail: %w", err)
+	}
+	defer uploadStream.Close()
+
+	if _, err := io.Copy(uploadStream, file); err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to upload thumbnail to GridFS: %w", err)
+	}
+
+	// Clean up local thumbnail file
+	if err := os.Remove(thumbnailPath); err != nil {
+		log.Printf("Failed to remove temporary thumbnail file: %v", err)
+	}
+
+	return thumbnailID, nil
 }
 
 func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile string) {
@@ -129,30 +193,52 @@ func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile stri
 		return
 	}
 
-	hlsPlaylist := fmt.Sprintf("%s/playlist.m3u8", outputDir)
+	hlsPlaylistPath := filepath.Join(outputDir, "playlist.m3u8")
 
-	// Enhanced ffmpeg command with multiple quality levels
+	// Use the segment muxer to create HLS segments in a temporary directory
 	cmd := exec.Command("ffmpeg",
 		"-i", rawFile,
 		"-c:v", "libx264",
 		"-c:a", "aac",
-		"-hls_time", "10",
-		"-hls_list_size", "0",
-		"-hls_segment_filename", fmt.Sprintf("%s/segment_%%03d.ts", outputDir),
-		"-f", "hls",
-		hlsPlaylist)
+		"-f", "segment",
+		"-segment_time", "10",
+		"-segment_list", hlsPlaylistPath,
+		"-segment_format", "mpegts",
+		filepath.Join(outputDir, "segment%03d.ts"),
+	)
+
+	// Capture stderr for better error logging
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		log.Printf("Error transcoding video: %v", err)
-		s.updateVideoStatus(ctx, videoID, StatusFailed, fmt.Sprintf("Transcoding failed: %v", err))
+		log.Printf("Error transcoding video: %v, stderr: %s", err, stderr.String())
+		s.updateVideoStatus(ctx, videoID, StatusFailed, fmt.Sprintf("Transcoding failed: %v - %s", err, stderr.String()))
 		return
+	}
+
+	// After transcoding, upload the playlist and segments to GridFS
+	if err := uploadHLSToGridFS(s.fs, outputDir, videoID); err != nil {
+		log.Printf("Failed to upload HLS files to GridFS: %v", err)
+		s.updateVideoStatus(ctx, videoID, StatusFailed, "Failed to upload HLS files")
+		return
+	}
+
+	// Clean up the temporary directory
+	if err := os.RemoveAll(outputDir); err != nil {
+		log.Printf("Failed to remove temporary processing directory: %v", err)
+	}
+
+	// Clean up the temporary raw file
+	if err := os.Remove(rawFile); err != nil {
+		log.Printf("Failed to remove temporary raw file: %v", err)
 	}
 
 	// Update video with HLS path and completed status
 	update := bson.M{
 		"$set": bson.M{
-			"status":   StatusCompleted,
-			"hlsPath":  hlsPlaylist,
+			"status":    StatusCompleted,
+			"hlsPath":   fmt.Sprintf("%s/playlist.m3u8", videoID.Hex()), // GridFS path
 			"updatedAt": time.Now(),
 		},
 	}
@@ -166,12 +252,45 @@ func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile stri
 	log.Printf("Video transcoded successfully: %s", videoID.Hex())
 }
 
+// uploadHLSToGridFS reads all HLS files from a directory and uploads them to GridFS.
+func uploadHLSToGridFS(fs *gridfs.Bucket, dirPath string, videoID primitive.ObjectID) error {
+	files, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("could not read processing directory: %w", err)
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(dirPath, file.Name())
+		gridFSFilename := fmt.Sprintf("%s/%s", videoID.Hex(), file.Name())
+
+		fileReader, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Could not open file %s for GridFS upload: %v", filePath, err)
+			continue // Skip this file and try others
+		}
+		defer fileReader.Close()
+
+		uploadStream, err := fs.OpenUploadStream(gridFSFilename)
+		if err != nil {
+			log.Printf("Could not open GridFS upload stream for %s: %v", gridFSFilename, err)
+			continue
+		}
+		defer uploadStream.Close()
+
+		if _, err := io.Copy(uploadStream, fileReader); err != nil {
+			log.Printf("Could not copy file %s to GridFS: %v", filePath, err)
+		}
+	}
+
+	return nil
+}
+
 // updateVideoStatus is a helper method to update video status with error message
 func (s *VideoService) updateVideoStatus(ctx context.Context, videoID primitive.ObjectID, status VideoStatus, errorMsg string) {
 	update := bson.M{
 		"$set": bson.M{
-			"status":   status,
-			"error":    errorMsg,
+			"status":    status,
+			"error":     errorMsg,
 			"updatedAt": time.Now(),
 		},
 	}
@@ -180,6 +299,78 @@ func (s *VideoService) updateVideoStatus(ctx context.Context, videoID primitive.
 	if err != nil {
 		log.Printf("Error updating video status: %v", err)
 	}
+}
+
+// UpdateVideoStatus updates a video's status (public method for manual status updates)
+func (s *VideoService) UpdateVideoStatus(ctx context.Context, videoID primitive.ObjectID, status VideoStatus) error {
+	update := bson.M{
+		"$set": bson.M{
+			"status":    status,
+			"updatedAt": time.Now(),
+		},
+	}
+
+	result, err := s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, update)
+	if err != nil {
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		return mongo.ErrNoDocuments
+	}
+
+	return nil
+}
+
+// GridFSHLSWriter implements io.Writer to upload HLS segments to GridFS
+type GridFSHLSWriter struct {
+	fs        *gridfs.Bucket
+	videoID   primitive.ObjectID
+	outputDir string
+	wg        *sync.WaitGroup
+}
+
+func (w *GridFSHLSWriter) Write(p []byte) (int, error) {
+	segmentName := strings.TrimSpace(string(p))
+	segmentPath := filepath.Join(w.outputDir, segmentName)
+	gridfsFilename := fmt.Sprintf("%s/%s", w.videoID.Hex(), segmentName)
+
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+
+		file, err := os.Open(segmentPath)
+		if err != nil {
+			log.Printf("Error opening segment file for upload: %v", err)
+			return
+		}
+		defer file.Close()
+
+		uploadStream, err := w.fs.OpenUploadStream(gridfsFilename)
+		if err != nil {
+			log.Printf("Error opening GridFS upload stream for segment: %v", err)
+			return
+		}
+		defer uploadStream.Close()
+
+		if _, err := io.Copy(uploadStream, file); err != nil {
+			log.Printf("Error uploading segment to GridFS: %v", err)
+		}
+
+		// Clean up the local segment file after upload
+		os.Remove(segmentPath)
+	}()
+
+	return len(p), nil
+}
+
+// DownloadFromGridFS downloads a file from GridFS by its filename
+func (s *VideoService) DownloadFromGridFS(ctx context.Context, filename string) (*gridfs.DownloadStream, error) {
+	downloadStream, err := s.fs.OpenDownloadStreamByName(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open download stream for %s: %w", filename, err)
+	}
+	return downloadStream, nil
 }
 
 // GetVideoByID retrieves a single video by its ID.
@@ -208,7 +399,7 @@ func (s *VideoService) ListVideos(ctx context.Context, page, limit int) ([]*Vide
 	}
 	defer cursor.Close(ctx)
 
-	var videos []*Video
+	var videos []*Video = []*Video{}
 	if err = cursor.All(ctx, &videos); err != nil {
 		return nil, err
 	}
@@ -350,5 +541,6 @@ func (s *VideoService) GetTrendingVideos(ctx context.Context, limit int, daysBac
 	}
 	return videos, nil
 }
+
 
 

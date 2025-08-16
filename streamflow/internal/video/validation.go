@@ -19,11 +19,15 @@ const (
 )
 
 var AllowedVideoTypes = map[string]bool{
-	"video/mp4":  true,
-	"video/avi":  true,
-	"video/mov":  true,
-	"video/mkv":  true,
-	"video/webm": true,
+    "video/mp4":       true,
+    "video/avi":       true,
+    "video/mov":       true,
+    "video/mkv":       true,
+    "video/webm":      true,
+    // Common platform-specific MIME types
+    "video/quicktime": true,  // iOS MOV
+    "video/x-msvideo": true,  // AVI
+    "video/x-matroska": true, // MKV
 }
 
 type ValidationError struct {
@@ -169,8 +173,16 @@ func DetectCorruptVideo(filePath string) error {
 		"-of", "csv=p=0",
 		filePath)
 
+	var stderr bytes.Buffer
+    cmd.Stderr = &stderr
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("video file appears to be corrupted or unreadable: %w", err)
+        if _, ok := err.(*exec.ExitError); ok {
+            // ffprobe exits with an error if the file is corrupt
+            return fmt.Errorf("video file appears to be corrupted or unreadable: %s", stderr.String())
+        }
+        // This handles cases where ffprobe itself is not found or has other issues
+		return fmt.Errorf("failed to execute ffprobe: %w. Ensure ffmpeg is installed and in your PATH", err)
 	}
 
 	return nil

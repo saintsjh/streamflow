@@ -93,27 +93,6 @@ func (s *VideoService) CreateVideoSimple(ctx context.Context, userID primitive.O
 	return newVideo, nil
 }
 
-// Add UpdateVideoStatus method for testing
-func (s *VideoService) UpdateVideoStatus(ctx context.Context, videoID primitive.ObjectID, status VideoStatus) error {
-	update := bson.M{
-		"$set": bson.M{
-			"status":    status,
-			"updatedAt": time.Now(),
-		},
-	}
-
-	result, err := s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, update)
-	if err != nil {
-		return err
-	}
-
-	if result.MatchedCount == 0 {
-		return mongo.ErrNoDocuments
-	}
-
-	return nil
-}
-
 // Add UpdateVideoMetadata method for testing
 func (s *VideoService) UpdateVideoMetadata(ctx context.Context, videoID primitive.ObjectID, metadata VideoMetadata) error {
 	update := bson.M{

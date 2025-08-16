@@ -1,6 +1,10 @@
 package users
 
 import (
+	"errors"
+
+	"github.com/go-playground/validator/v10"
+
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -29,12 +33,20 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 	}
 
 	//call service to create user
-	createdUser, err := h.userService.CreateUser(c.Context(), user)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to create user",
-		})
-	}
+    createdUser, err := h.userService.CreateUser(c.Context(), user)
+    if err != nil {
+        // Map validation errors to 400, duplicate to 409, others 500
+        var vErr validator.ValidationErrors
+        if errors.As(err, &vErr) || err.Error() == "email is required" {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+        }
+        if err.Error() == "user already exists" {
+            return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+        }
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "error": "Failed to create user",
+        })
+    }
 
 	//generate JWT token
 	token, err := h.jwtService.GenerateToken(createdUser.ID)
@@ -44,7 +56,7 @@ func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.JSON(fiber.Map{
+    return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "User created successfully",
 		"token":   token,
 		"user":    *createdUser,

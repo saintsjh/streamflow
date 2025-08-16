@@ -17,10 +17,17 @@ func NewLivestreamHandler(livestreamService *LivestreamService) *LivestreamHandl
 }
 
 func (h *LivestreamHandler) StartStream(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(primitive.ObjectID)
+	userIDStr, ok := c.Locals("user_id").(string)
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Unauthorized",
+		})
+	}
+	
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid user ID",
 		})
 	}
 	var req StartStreamRequest
@@ -41,10 +48,17 @@ func (h *LivestreamHandler) StartStream(c *fiber.Ctx) error {
 }
 
 func (h *LivestreamHandler) StopStream(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(primitive.ObjectID)
+	userIDStr, ok := c.Locals("user_id").(string)
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Unauthorized",
+		})
+	}
+	
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid user ID",
 		})
 	}
 

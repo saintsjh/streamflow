@@ -43,6 +43,7 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	api.Get("/video/trending", videoHandler.GetTrendingVideos)
 	api.Get("/video/:id", videoHandler.GetVideo)
 	api.Put("/video/:id", videoHandler.UpdateVideo)
+	api.Patch("/video/:id/status", videoHandler.UpdateVideoStatus)
 	api.Delete("/video/:id", videoHandler.DeleteVideo)
 
 	// Video streaming endpoints (public - no auth required for streaming)

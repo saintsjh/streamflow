@@ -1,8 +1,8 @@
 package video
 
 import (
+	"fmt"
 	"log"
-	"path/filepath"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,9 +20,14 @@ func NewVideoHandler(videoService *VideoService) *VideoHandler {
 
 func (h *VideoHandler) UploadVideo(c *fiber.Ctx) error {
 	//get user id from context
-	userID, ok := c.Locals("user_id").(primitive.ObjectID)
+	userIDStr, ok := c.Locals("user_id").(string)
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+	
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid user ID"})
 	}
 
 	title := c.FormValue("title")
@@ -50,12 +55,12 @@ func (h *VideoHandler) UploadVideo(c *fiber.Ctx) error {
 	}
 	defer file.Close()
 
-	video, err := h.videoService.CreateVideo(c.Context(), file, title, description, userID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create video"})
-	}
+    video, err := h.videoService.CreateVideo(c.Context(), file, title, description, userID)
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+    }
 
-	return c.Status(fiber.StatusCreated).JSON(video)
+    return c.Status(fiber.StatusCreated).JSON(video)
 }
 
 func (h *VideoHandler) ListVideos(c *fiber.Ctx) error {
@@ -165,9 +170,16 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 		c.Set("X-Seek-Time", strconv.FormatFloat(seekTime, 'f', 2, 64))
 		c.Set("X-Video-Duration", strconv.FormatFloat(video.Metadata.Duration, 'f', 2, 64))
 	}
-	
-	// Serve the HLS playlist file
-	return c.SendFile(video.HLSPath)
+
+	// Serve the HLS playlist file from GridFS
+	playlistName := fmt.Sprintf("%s/playlist.m3u8", video.ID.Hex())
+	downloadStream, err := h.videoService.DownloadFromGridFS(c.Context(), playlistName)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Playlist not found"})
+	}
+	defer downloadStream.Close()
+
+	return c.SendStream(downloadStream)
 }
 
 // ServeVideoSegment serves individual video segments for HLS streaming with timestamp support
@@ -191,18 +203,24 @@ func (h *VideoHandler) ServeVideoSegment(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Video is not ready for streaming"})
 	}
 
-	// Construct segment path
-	segmentPath := filepath.Join(filepath.Dir(video.HLSPath), segmentName)
-	
+	// Construct segment filename for GridFS lookup
+	segmentFilename := fmt.Sprintf("%s/%s", video.ID.Hex(), segmentName)
+
 	// Set proper headers for video segments
 	c.Set("Content-Type", "video/MP2T")
 	c.Set("Cache-Control", "public, max-age=3600") // Cache segments for 1 hour
 	
 	// Add timestamp information to response headers
 	c.Set("X-Video-Duration", strconv.FormatFloat(video.Metadata.Duration, 'f', 2, 64))
-	
-	// Serve the video segment file
-	return c.SendFile(segmentPath)
+
+	// Serve the video segment file from GridFS
+	downloadStream, err := h.videoService.DownloadFromGridFS(c.Context(), segmentFilename)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Segment not found"})
+	}
+	defer downloadStream.Close()
+
+	return c.SendStream(downloadStream)
 }
 
 // GetVideoThumbnail serves the video thumbnail
@@ -224,9 +242,20 @@ func (h *VideoHandler) GetVideoThumbnail(c *fiber.Ctx) error {
 	// Set proper headers for image
 	c.Set("Content-Type", "image/jpeg")
 	c.Set("Cache-Control", "public, max-age=86400") // Cache thumbnails for 24 hours
-	
-	// Serve the thumbnail file
-	return c.SendFile(video.ThumbnailPath)
+
+	// Serve the thumbnail file from GridFS by its ID
+	thumbnailID, err := primitive.ObjectIDFromHex(video.ThumbnailPath)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid thumbnail ID"})
+	}
+
+	downloadStream, err := h.videoService.fs.OpenDownloadStream(thumbnailID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Thumbnail not found in GridFS"})
+	}
+	defer downloadStream.Close()
+
+	return c.SendStream(downloadStream)
 }
 
 // GetVideoTimestamp returns the current timestamp and duration information
@@ -279,6 +308,49 @@ func (h *VideoHandler) GetPopularVideos(c *fiber.Ctx) error {
 	}
 	
 	return c.Status(fiber.StatusOK).JSON(videos)
+}
+
+// UpdateVideoStatus manually updates a video's status (for debugging/admin purposes)
+func (h *VideoHandler) UpdateVideoStatus(c *fiber.Ctx) error {
+	videoID, err := primitive.ObjectIDFromHex(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid video ID"})
+	}
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+
+	// Validate status
+	var status VideoStatus
+	switch req.Status {
+	case "PENDING":
+		status = StatusPending
+	case "PROCESSING":
+		status = StatusProcessing
+	case "COMPLETED":
+		status = StatusCompleted
+	case "FAILED":
+		status = StatusFailed
+	default:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid status. Must be PENDING, PROCESSING, COMPLETED, or FAILED"})
+	}
+
+	err = h.videoService.UpdateVideoStatus(c.Context(), videoID, status)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update video status"})
+	}
+
+	// Return updated video
+	video, err := h.videoService.GetVideoByID(c.Context(), videoID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get updated video"})
+	}
+
+	return c.JSON(video)
 }
 
 // GetTrendingVideos returns trending videos (recent + high views)
