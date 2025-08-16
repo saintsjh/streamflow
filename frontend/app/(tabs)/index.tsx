@@ -77,8 +77,8 @@ const formatTimeAgo = (dateString: string) => {
   return `${Math.floor(diffInHours / 24)}d ago`;
 };
 
-const RecentlyViewedCard = ({ item }: { item: any }) => (
-  <TouchableOpacity style={styles.recentCard}>
+const RecentlyViewedCard = ({ item, onPress }: { item: any; onPress: () => void }) => (
+  <TouchableOpacity style={styles.recentCard} onPress={onPress}>
     <View style={styles.recentCardThumbnail}>
       <Text style={styles.placeholderIcon}>
         {item.type === 'stream' ? '📹' : '🎬'}
@@ -100,8 +100,8 @@ const RecentlyViewedCard = ({ item }: { item: any }) => (
   </TouchableOpacity>
 );
 
-const TrendingCard = ({ item }: { item: any }) => (
-  <TouchableOpacity style={styles.trendingCard}>
+const TrendingCard = ({ item, onPress }: { item: any; onPress: () => void }) => (
+  <TouchableOpacity style={styles.trendingCard} onPress={onPress}>
     <View style={styles.trendingCardThumbnail}>
       <Text style={styles.placeholderIcon}>🔥</Text>
       <View style={styles.durationBadge}>
@@ -291,6 +291,24 @@ export default function HomeScreen() {
     return '🌙';
   };
 
+  const handleWatchContent = async (item: any) => {
+    // Save to recently viewed before navigating
+    await saveToRecentlyViewed({
+      id: item.id,
+      title: item.title,
+      type: item.type || (item.duration === 'LIVE' ? 'stream' : 'video'),
+      duration: item.duration,
+      viewedAt: new Date().toISOString(),
+    });
+
+    // Navigate to appropriate screen based on content type
+    if (item.type === 'stream' || item.duration === 'LIVE') {
+      router.push(`/screens/livestream?id=${item.id}`);
+    } else {
+      router.push(`/screens/video?id=${item.id}`);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -382,7 +400,12 @@ export default function HomeScreen() {
             
             <FlatList
               data={recentlyViewed}
-              renderItem={({ item }) => <RecentlyViewedCard item={item} />}
+              renderItem={({ item }) => (
+                <RecentlyViewedCard 
+                  item={item} 
+                  onPress={() => handleWatchContent(item)}
+                />
+              )}
               keyExtractor={(item) => item.id}
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -406,7 +429,10 @@ export default function HomeScreen() {
             ) : trendingContent.length > 0 ? (
               trendingContent.map((item) => (
                 <View key={item.id} style={styles.trendingCardWrapper}>
-                  <TrendingCard item={item} />
+                  <TrendingCard 
+                    item={item} 
+                    onPress={() => handleWatchContent(item)}
+                  />
                 </View>
               ))
             ) : (

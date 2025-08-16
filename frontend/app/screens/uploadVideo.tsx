@@ -142,7 +142,7 @@ export default function UploadVideoScreen() {
         },
       });
 
-      if (response.status === 200) {
+      if (response.status >= 200 && response.status < 300) {
         Alert.alert(
           'Upload Successful! 🎉',
           `Your video "${uploadData.title}" has been uploaded successfully and will be processed shortly.`,
@@ -160,6 +160,7 @@ export default function UploadVideoScreen() {
       }
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || 'Failed to upload your video. Please check your connection and try again.';
+      console.log("error", errorMessage);
       Alert.alert(
         'Upload Error',
         errorMessage,

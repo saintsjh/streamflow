@@ -70,8 +70,12 @@ export default function VideoScreen() {
   const controlsTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
+    console.log('🚀 [VIDEO] useEffect triggered with ID:', id);
     if (id) {
+      console.log('📱 [VIDEO] ID exists, calling loadVideo');
       loadVideo();
+    } else {
+      console.log('⚠️ [VIDEO] No ID provided');
     }
   }, [id]);
 
@@ -91,63 +95,119 @@ export default function VideoScreen() {
   }, [showControls, isPlaying]);
 
   const loadVideo = async () => {
+    console.log('🎬 [VIDEO] Starting loadVideo for ID:', id);
     try {
       const token = await AsyncStorage.getItem('userToken');
+      console.log('🔑 [VIDEO] Retrieved token:', token ? 'Present' : 'Missing');
+      
       if (!token) {
+        console.log('❌ [VIDEO] No token found, redirecting to login');
         Alert.alert('Authentication Error', 'Please log in again.');
         await logout();
         return;
       }
 
+      console.log('📡 [VIDEO] Making API request to:', `${API_BASE_URL}/api/video/${id}`);
       const response = await axios.get(`${API_BASE_URL}/api/video/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
 
+      console.log('✅ [VIDEO] API Response received:', {
+        status: response.status,
+        data: response.data
+      });
+      
+      console.log('📊 [VIDEO] Video metadata:', {
+        ID: response.data.ID,
+        Title: response.data.Title,
+        Status: response.data.Status,
+        HLSPath: response.data.hlsPath,
+        Duration: response.data.Metadata?.Duration,
+        Error: response.data.Error
+      });
+
       setVideo(response.data);
       setDuration(response.data.Metadata.Duration);
+      
+      console.log('💾 [VIDEO] Video state updated successfully');
     } catch (error: any) {
-      console.error('Error loading video:', error);
+      console.error('❌ [VIDEO] Error loading video:', error);
+      console.log('🔍 [VIDEO] Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: error.config?.headers
+        }
+      });
+      
       const errorMessage = error.response?.data?.error || 'Failed to load video. Please try again.';
       Alert.alert('Error', errorMessage);
     } finally {
+      console.log('🏁 [VIDEO] loadVideo completed, setting isLoading to false');
       setIsLoading(false);
     }
   };
 
   const handlePlayPause = async () => {
+    console.log('▶️ [VIDEO] handlePlayPause called, current state:', { isPlaying });
     if (videoRef.current) {
-      if (isPlaying) {
-        await videoRef.current.pauseAsync();
-      } else {
-        await videoRef.current.playAsync();
+      try {
+        if (isPlaying) {
+          console.log('⏸️ [VIDEO] Pausing video');
+          await videoRef.current.pauseAsync();
+        } else {
+          console.log('▶️ [VIDEO] Playing video');
+          await videoRef.current.playAsync();
+        }
+        setIsPlaying(!isPlaying);
+        console.log('✅ [VIDEO] Play/pause successful, new state:', !isPlaying);
+      } catch (error) {
+        console.error('❌ [VIDEO] Error in handlePlayPause:', error);
       }
-      setIsPlaying(!isPlaying);
+    } else {
+      console.log('⚠️ [VIDEO] videoRef.current is null');
     }
   };
 
   const handleSeek = async (time: number) => {
+    console.log('⏩ [VIDEO] handleSeek called with time:', time);
     if (videoRef.current && video) {
-      await videoRef.current.setPositionAsync(time * 1000);
-      setCurrentTime(time);
-      
-      // Update backend with seek time for analytics
       try {
-        const token = await AsyncStorage.getItem('userToken');
-        if (token) {
-          await axios.get(`${API_BASE_URL}/video/${id}/timestamp?current=${time}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
+        console.log('🎯 [VIDEO] Setting video position to:', time * 1000, 'milliseconds');
+        await videoRef.current.setPositionAsync(time * 1000);
+        setCurrentTime(time);
+        console.log('✅ [VIDEO] Seek successful');
+        
+        // Update backend with seek time for analytics
+        try {
+          const token = await AsyncStorage.getItem('userToken');
+          if (token) {
+            console.log('📡 [VIDEO] Updating timestamp on backend:', time);
+            await axios.get(`${API_BASE_URL}/video/${id}/timestamp?current=${time}`, {
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            console.log('✅ [VIDEO] Timestamp updated on backend');
+          }
+        } catch (error) {
+          console.log('⚠️ [VIDEO] Failed to update timestamp:', error);
         }
       } catch (error) {
-        console.log('Failed to update timestamp:', error);
+        console.error('❌ [VIDEO] Error in handleSeek:', error);
       }
+    } else {
+      console.log('⚠️ [VIDEO] Cannot seek - videoRef or video missing');
     }
   };
 
   const handleVideoPress = () => {
+    console.log('👆 [VIDEO] Video pressed, toggling controls. Current state:', showControls);
     setShowControls(!showControls);
+    console.log('🎛️ [VIDEO] Controls will be:', !showControls ? 'shown' : 'hidden');
   };
 
   const handleFullscreen = () => {
@@ -192,6 +252,7 @@ export default function VideoScreen() {
   };
 
   if (isLoading) {
+    console.log('⏳ [VIDEO] Rendering loading state');
     return (
       <SafeAreaView style={styles.container}>
         <BackHeader title="Loading..." />
@@ -204,6 +265,7 @@ export default function VideoScreen() {
   }
 
   if (!video) {
+    console.log('❌ [VIDEO] Rendering error state - no video data');
     return (
       <SafeAreaView style={styles.container}>
         <BackHeader title="Video Not Found" />
@@ -218,6 +280,16 @@ export default function VideoScreen() {
   }
 
   const statusInfo = getVideoStatus(video.Status);
+  
+  console.log('🎯 [VIDEO] Rendering video component with:', {
+    videoID: video.ID,
+    title: video.Title,
+    status: video.Status,
+    statusInfo: statusInfo,
+    hlsPath: video.HLSPath,
+    isCompleted: video.Status === 'COMPLETED',
+    hasHLSPath: !!video.HLSPath
+  });
 
   return (
     <SafeAreaView style={[styles.container, isFullscreen && styles.fullscreenContainer]}>
@@ -235,6 +307,7 @@ export default function VideoScreen() {
       <View style={[styles.videoContainer, isFullscreen && styles.fullscreenVideoContainer]}>
         {video.Status === 'COMPLETED' && video.HLSPath ? (
           <>
+            {console.log('🎥 [VIDEO] Rendering video player with stream URL:', `${API_BASE_URL}/stream/${id}`)}
             <Video
               ref={videoRef}
               style={styles.video}
@@ -243,6 +316,15 @@ export default function VideoScreen() {
               isLooping={false}
               resizeMode={ResizeMode.CONTAIN}
               onPlaybackStatusUpdate={(status: any) => {
+                console.log('📺 [VIDEO] Playback status update:', {
+                  isLoaded: status.isLoaded,
+                  isPlaying: status.isPlaying,
+                  isBuffering: status.isBuffering,
+                  positionMillis: status.positionMillis,
+                  durationMillis: status.durationMillis,
+                  error: status.error
+                });
+                
                 if (status.isLoaded) {
                   setCurrentTime(status.positionMillis / 1000);
                   setIsPlaying(status.isPlaying);
@@ -251,6 +333,16 @@ export default function VideoScreen() {
                     setDuration(status.durationMillis / 1000);
                   }
                 }
+                
+                if (status.error) {
+                  console.error('❌ [VIDEO] Video playback error:', status.error);
+                }
+              }}
+              onLoad={(data: any) => {
+                console.log('✅ [VIDEO] Video loaded successfully:', data);
+              }}
+              onError={(error: any) => {
+                console.error('❌ [VIDEO] Video load error:', error);
               }}
             />
             
@@ -316,22 +408,30 @@ export default function VideoScreen() {
             </TouchableOpacity>
           </>
         ) : (
-          <View style={styles.processingContainer}>
-            <Text style={styles.processingTitle}>Video Processing</Text>
-            <Text style={[styles.statusText, { color: statusInfo.color }]}>
-              {statusInfo.text}
-            </Text>
-            {video.Status === 'PROCESSING' && (
-              <ActivityIndicator size="large" color="#007AFF" style={styles.processingLoader} />
-            )}
-            <Text style={styles.processingDescription}>
-              {video.Status === 'PENDING' 
-                ? 'Your video is queued for processing...'
-                : video.Status === 'PROCESSING'
-                ? 'Converting video for optimal streaming...'
-                : video.Error || 'Processing failed. Please try uploading again.'}
-            </Text>
-          </View>
+          <>
+            {console.log('⚠️ [VIDEO] Rendering processing container - video not ready for playback:', {
+              status: video.Status,
+              hlsPath: video.HLSPath,
+              error: video.Error,
+              statusInfo: statusInfo
+            })}
+            <View style={styles.processingContainer}>
+              <Text style={styles.processingTitle}>Video Processing</Text>
+              <Text style={[styles.statusText, { color: statusInfo.color }]}>
+                {statusInfo.text}
+              </Text>
+              {video.Status === 'PROCESSING' && (
+                <ActivityIndicator size="large" color="#007AFF" style={styles.processingLoader} />
+              )}
+              <Text style={styles.processingDescription}>
+                {video.Status === 'PENDING' 
+                  ? 'Your video is queued for processing...'
+                  : video.Status === 'PROCESSING'
+                  ? 'Converting video for optimal streaming...'
+                  : video.Error || 'Processing failed. Please try uploading again.'}
+              </Text>
+            </View>
+          </>
         )}
       </View>
 

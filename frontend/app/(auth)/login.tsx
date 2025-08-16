@@ -47,8 +47,8 @@ const Login = () => {
       if (response.data.token) {
         console.log('[LOGIN] Token received, calling auth context login');
         await login(response.data.token);
-        console.log('[LOGIN] Login successful, navigation will be handled by root layout');
-        // Navigation will be handled automatically by the root layout
+        console.log('[LOGIN] Login successful, navigating to tabs');
+        router.replace('/(tabs)');
       } else {
         console.error('[LOGIN] No token in response', { responseData: response.data });
         throw new Error('Login failed');

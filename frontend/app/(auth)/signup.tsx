@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useAuth } from '@/contexts/AuthContext';
 import axios from "axios";
 import { API_BASE_URL } from '@/config/api';
 
@@ -10,6 +11,7 @@ const SignUp = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const { signup } = useAuth();
 
     const handleSignUp = async () => {
         if (!userName || !email || !password) {
@@ -25,9 +27,9 @@ const SignUp = () => {
                 password,
             });
 
-            if (response.status === 201) {
-                Alert.alert('Success', 'Account created successfully!');
-                router.replace('/(auth)/login');
+            if (response.status === 201 && response.data.token) {
+                console.log('Signup successful, logging in user automatically');
+                await signup(response.data.token);
             } else {
                 console.log(response.data);
             }

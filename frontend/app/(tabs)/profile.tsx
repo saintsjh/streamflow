@@ -125,27 +125,38 @@ export default function ProfileScreen() {
         }),
       ]);
 
-      const userData = userResponse.data;
-      const userID = userData.ID;
+      const userData = userResponse.data.user; // Extract user from response
+      const userID = userData.id; // Use lowercase 'id'
       setUser({
-        userName: userData.userName || userData.email.split('@')[0],
+        userName: userData.user_name,
         email: userData.email,
-        createdAt: userData.createdAt,
+        createdAt: userData.created_at,
       });
 
       if (userID) {
         const videosData = videosResponse.data;
         // Filter to only show user's own videos and convert to frontend format
-        const formattedVideos = videosData
+        const formattedVideos = (videosData || [])
           .filter((video: any) => video.UserID === userID)
-          .map((video: any) => ({
-            id: video.ID,
-            title: video.Title,
-            thumbnail: null,
-            createdAt: video.CreatedAt,
-            duration: Math.floor(video.Metadata?.Duration || 0),
-            views: video.ViewCount || 0,
-          }));
+          .map((video: any) => {
+            // Format duration properly
+            const durationSeconds = video.Metadata?.Duration || 0;
+            const formatDuration = (seconds: number) => {
+              if (!seconds || seconds === 0) return '0:00';
+              const mins = Math.floor(seconds / 60);
+              const secs = Math.floor(seconds % 60);
+              return `${mins}:${secs.toString().padStart(2, '0')}`;
+            };
+            
+            return {
+              id: video.ID,
+              title: video.Title,
+              thumbnail: null,
+              createdAt: video.CreatedAt,
+              duration: formatDuration(durationSeconds),
+              views: video.ViewCount || 0,
+            };
+          });
         setUserVideos(formattedVideos);
       }
     } catch (error: any) {
@@ -181,7 +192,7 @@ export default function ProfileScreen() {
           <View style={styles.avatarContainer}>
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>
-                {user.userName.charAt(0).toUpperCase()}
+                {user.userName?.charAt(0).toUpperCase() || 'U'}
               </Text>
             </View>
           </View>
