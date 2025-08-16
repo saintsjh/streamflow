@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Video, ResizeMode } from 'expo-av';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import Slider from '@react-native-community/slider';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
@@ -54,7 +54,6 @@ const videoHeight = screenWidth / videoAspectRatio;
 export default function VideoScreen() {
   const { logout } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const videoRef = useRef<Video>(null);
   
   const [video, setVideo] = useState<VideoData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -69,6 +68,84 @@ export default function VideoScreen() {
   
   const controlsTimeoutRef = useRef<number | null>(null);
 
+  // Initialize video player
+  const player = useVideoPlayer('', player => {
+    player.loop = false;
+  });
+
+  // Update player source when video data is loaded
+  useEffect(() => {
+    if (video?.Status === 'COMPLETED' && video?.HLSPath && id) {
+      // Try both the stream endpoint and the direct HLS path
+      const streamUrl = `${API_BASE_URL}/stream/${id}`;   
+      
+      console.log('🎥 [VIDEO] Available video URLs:');
+      console.log('  Stream URL:', streamUrl);      console.log('🎥 [VIDEO] Video HLS Path:', video.HLSPath);
+      
+              // Debug: First fetch and examine the HLS playlist content
+        console.log('🎥 [VIDEO] Fetching HLS playlist to debug content...');
+        
+        (async () => {
+          try {
+            // Get token for authenticated request (like other API calls)
+            const token = await AsyncStorage.getItem('userToken');
+            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+            
+            const response = await axios.get(streamUrl, {
+              timeout: 10000,
+              validateStatus: () => true, // Don't throw on non-2xx status
+              headers
+            });
+            
+            console.log('📋 [VIDEO] HLS Response Status:', response.status);
+            console.log('📋 [VIDEO] HLS Headers:', {
+              'content-type': response.headers['content-type'],
+              'content-length': response.headers['content-length'],
+              'cache-control': response.headers['cache-control']
+            });
+            
+            if (response.status !== 200) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const playlistContent = response.data;
+            console.log('📝 [VIDEO] HLS Playlist Content:');
+            console.log(playlistContent);
+            console.log('📝 [VIDEO] Playlist length:', playlistContent.length);
+            
+            // Check if it looks like a valid HLS playlist
+            if (playlistContent.includes('#EXTM3U')) {
+              console.log('✅ [VIDEO] Valid HLS playlist detected');
+            } else {
+              console.log('❌ [VIDEO] Invalid HLS playlist - missing #EXTM3U header');
+            }
+            
+            // Now try to load it in the player
+            console.log('🎬 [VIDEO] Loading stream in expo-video player...');
+            await player.replaceAsync(streamUrl);
+            console.log('✅ [VIDEO] Player loaded successfully');
+            
+          } catch (error: any) {
+            console.error('❌ [VIDEO] HLS stream error:', error);
+            console.error('❌ [VIDEO] Error details:', {
+              name: error.name,
+              message: error.message,
+              status: error.response?.status,
+              statusText: error.response?.statusText,
+              stack: error.stack?.substring(0, 500)
+            });
+          }
+        })();
+    } else {
+      console.log('⚠️ [VIDEO] Cannot load video:', {
+        status: video?.Status,
+        hasHLSPath: !!video?.HLSPath,
+        hasId: !!id,
+        hlsPath: video?.HLSPath
+      });
+    }
+  }, [video, id, player]);
+
   useEffect(() => {
     console.log('🚀 [VIDEO] useEffect triggered with ID:', id);
     if (id) {
@@ -78,6 +155,39 @@ export default function VideoScreen() {
       console.log('⚠️ [VIDEO] No ID provided');
     }
   }, [id]);
+
+  // Listen to player events
+  useEffect(() => {
+    if (!player) return;
+
+    const subscription = player.addListener('playingChange', (event) => {
+      console.log('📺 [VIDEO] Playing state changed:', event.isPlaying);
+      setIsPlaying(event.isPlaying);
+    });
+
+    const timeSubscription = player.addListener('timeUpdate', (event) => {
+      setCurrentTime(event.currentTime);
+      // Get duration from player directly
+      if (player.duration) {
+        setDuration(player.duration);
+      }
+    });
+
+    const statusSubscription = player.addListener('statusChange', (event) => {
+      console.log('📺 [VIDEO] Status changed:', event.status);
+      setBuffering(event.status === 'loading');
+      
+      if (event.status === 'error') {
+        console.error('❌ [VIDEO] Player error detected');
+      }
+    });
+
+    return () => {
+      subscription?.remove();
+      timeSubscription?.remove();
+      statusSubscription?.remove();
+    };
+  }, [player]);
 
   useEffect(() => {
     // Hide controls after 3 seconds of inactivity
@@ -123,7 +233,8 @@ export default function VideoScreen() {
         ID: response.data.ID,
         Title: response.data.Title,
         Status: response.data.Status,
-        HLSPath: response.data.hlsPath,
+        HLSPath: response.data.HLSPath, // Check both cases
+        hlsPath: response.data.hlsPath,
         Duration: response.data.Metadata?.Duration,
         Error: response.data.Error
       });
@@ -155,14 +266,14 @@ export default function VideoScreen() {
 
   const handlePlayPause = async () => {
     console.log('▶️ [VIDEO] handlePlayPause called, current state:', { isPlaying });
-    if (videoRef.current) {
+    if (player) {
       try {
         if (isPlaying) {
           console.log('⏸️ [VIDEO] Pausing video');
-          await videoRef.current.pauseAsync();
+          player.pause();
         } else {
           console.log('▶️ [VIDEO] Playing video');
-          await videoRef.current.playAsync();
+          player.play();
         }
         setIsPlaying(!isPlaying);
         console.log('✅ [VIDEO] Play/pause successful, new state:', !isPlaying);
@@ -170,16 +281,16 @@ export default function VideoScreen() {
         console.error('❌ [VIDEO] Error in handlePlayPause:', error);
       }
     } else {
-      console.log('⚠️ [VIDEO] videoRef.current is null');
+      console.log('⚠️ [VIDEO] player is null');
     }
   };
 
   const handleSeek = async (time: number) => {
     console.log('⏩ [VIDEO] handleSeek called with time:', time);
-    if (videoRef.current && video) {
+    if (player && video) {
       try {
-        console.log('🎯 [VIDEO] Setting video position to:', time * 1000, 'milliseconds');
-        await videoRef.current.setPositionAsync(time * 1000);
+        console.log('🎯 [VIDEO] Setting video position to:', time, 'seconds');
+        player.currentTime = time;
         setCurrentTime(time);
         console.log('✅ [VIDEO] Seek successful');
         
@@ -200,7 +311,7 @@ export default function VideoScreen() {
         console.error('❌ [VIDEO] Error in handleSeek:', error);
       }
     } else {
-      console.log('⚠️ [VIDEO] Cannot seek - videoRef or video missing');
+      console.log('⚠️ [VIDEO] Cannot seek - player or video missing');
     }
   };
 
@@ -308,43 +419,25 @@ export default function VideoScreen() {
         {video.Status === 'COMPLETED' && video.HLSPath ? (
           <>
             {console.log('🎥 [VIDEO] Rendering video player with stream URL:', `${API_BASE_URL}/stream/${id}`)}
-            <Video
-              ref={videoRef}
+            <VideoView
               style={styles.video}
-              source={{ uri: `${API_BASE_URL}/stream/${id}` }}
-              shouldPlay={false}
-              isLooping={false}
-              resizeMode={ResizeMode.CONTAIN}
-              onPlaybackStatusUpdate={(status: any) => {
-                console.log('📺 [VIDEO] Playback status update:', {
-                  isLoaded: status.isLoaded,
-                  isPlaying: status.isPlaying,
-                  isBuffering: status.isBuffering,
-                  positionMillis: status.positionMillis,
-                  durationMillis: status.durationMillis,
-                  error: status.error
-                });
-                
-                if (status.isLoaded) {
-                  setCurrentTime(status.positionMillis / 1000);
-                  setIsPlaying(status.isPlaying);
-                  setBuffering(status.isBuffering);
-                  if (status.durationMillis) {
-                    setDuration(status.durationMillis / 1000);
-                  }
-                }
-                
-                if (status.error) {
-                  console.error('❌ [VIDEO] Video playback error:', status.error);
-                }
-              }}
-              onLoad={(data: any) => {
-                console.log('✅ [VIDEO] Video loaded successfully:', data);
-              }}
-              onError={(error: any) => {
-                console.error('❌ [VIDEO] Video load error:', error);
-              }}
+              player={player}
+              allowsFullscreen
+              allowsPictureInPicture
+              contentFit="contain"
             />
+            
+            {/* Debug info overlay - remove in production */}
+            {__DEV__ && (
+              <View style={styles.debugOverlay}>
+                <Text style={styles.debugText}>
+                  Status: {player.status} | Playing: {isPlaying ? 'Yes' : 'No'}
+                </Text>
+                <Text style={styles.debugText}>
+                  Time: {formatTime(currentTime)} / {formatTime(duration)}
+                </Text>
+              </View>
+            )}
             
             {/* Video Controls Overlay */}
             <TouchableOpacity 
@@ -788,5 +881,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#007AFF',
     textAlign: 'center',
+  },
+  
+  // Debug styles
+  debugOverlay: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    padding: 8,
+    borderRadius: 4,
+  },
+  debugText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'monospace',
   },
 });

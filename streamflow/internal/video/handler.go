@@ -173,13 +173,72 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 
 	// Serve the HLS playlist file from GridFS
 	playlistName := fmt.Sprintf("%s/playlist.m3u8", video.ID.Hex())
+	fmt.Printf("🔍 [VIDEO] Looking for GridFS file: %s\n", playlistName)
+	
 	downloadStream, err := h.videoService.DownloadFromGridFS(c.Context(), playlistName)
 	if err != nil {
+		fmt.Printf("❌ [VIDEO] GridFS download failed for %s: %v\n", playlistName, err)
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Playlist not found"})
 	}
 	defer downloadStream.Close()
 
-	return c.SendStream(downloadStream)
+	fmt.Printf("✅ [VIDEO] GridFS file found, serving HLS playlist: %s\n", playlistName)
+
+	// Read the content to debug what we're actually serving
+	buffer := make([]byte, 512) // Read first 512 bytes
+	n, readErr := downloadStream.Read(buffer)
+	if readErr != nil && readErr.Error() != "EOF" {
+		fmt.Printf("❌ [VIDEO] Failed to read from GridFS stream: %v\n", readErr)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read playlist"})
+	}
+	
+	fmt.Printf("📝 [VIDEO] Playlist content preview (%d bytes): %s\n", n, string(buffer[:n]))
+	
+	// Reset stream position (create new stream since we can't seek)
+	downloadStream.Close()
+	downloadStream, err = h.videoService.DownloadFromGridFS(c.Context(), playlistName)
+	if err != nil {
+		fmt.Printf("❌ [VIDEO] Failed to re-open GridFS stream: %v\n", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to re-open playlist"})
+	}
+	defer downloadStream.Close()
+
+	// Alternative approach: Read full content and send directly (more reliable than SendStream)
+	// Read all content from GridFS
+	fullContent := make([]byte, 0)
+	buffer = make([]byte, 1024) // Reuse buffer variable
+	
+	for {
+		n, readErr := downloadStream.Read(buffer)
+		if n > 0 {
+			fullContent = append(fullContent, buffer[:n]...)
+		}
+		if readErr != nil {
+			if readErr.Error() == "EOF" {
+				break
+			}
+			fmt.Printf("❌ [VIDEO] Error reading GridFS stream: %v\n", readErr)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read playlist"})
+		}
+	}
+	
+	fmt.Printf("📊 [VIDEO] Read complete playlist: %d total bytes\n", len(fullContent))
+	
+	if len(fullContent) == 0 {
+		fmt.Printf("❌ [VIDEO] Empty playlist file: %s\n", playlistName)
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Empty playlist file"})
+	}
+	
+	// Send the content directly
+	c.Set("Content-Length", strconv.Itoa(len(fullContent)))
+	err = c.Send(fullContent)
+	if err != nil {
+		fmt.Printf("❌ [VIDEO] Failed to send content for %s: %v\n", playlistName, err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send playlist"})
+	}
+	
+	fmt.Printf("✅ [VIDEO] Successfully sent playlist: %s (%d bytes)\n", playlistName, len(fullContent))
+	return nil
 }
 
 // ServeVideoSegment serves individual video segments for HLS streaming with timestamp support
@@ -371,4 +430,24 @@ func (h *VideoHandler) GetTrendingVideos(c *fiber.Ctx) error {
 	}
 	
 	return c.Status(fiber.StatusOK).JSON(videos)
+}
+
+// ReprocessVideos manually triggers reprocessing of videos that failed GridFS upload
+func (h *VideoHandler) ReprocessVideos(c *fiber.Ctx) error {
+	err := h.videoService.ReprocessFailedVideos(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to reprocess videos"})
+	}
+	
+	return c.JSON(fiber.Map{"message": "Video reprocessing completed"})
+}
+
+// MigrateVideoFields fixes database field naming inconsistencies
+func (h *VideoHandler) MigrateVideoFields(c *fiber.Ctx) error {
+	err := h.videoService.MigrateVideoFieldNames(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to migrate video fields"})
+	}
+	
+	return c.JSON(fiber.Map{"message": "Video field migration completed"})
 }

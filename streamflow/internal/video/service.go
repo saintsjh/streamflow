@@ -237,9 +237,9 @@ func (s *VideoService) startTranscoding(videoID primitive.ObjectID, rawFile stri
 	// Update video with HLS path and completed status
 	update := bson.M{
 		"$set": bson.M{
-			"status":    StatusCompleted,
-			"hlsPath":   fmt.Sprintf("%s/playlist.m3u8", videoID.Hex()), // GridFS path
-			"updatedAt": time.Now(),
+			"status":     StatusCompleted,
+			"hls_path":   fmt.Sprintf("%s/playlist.m3u8", videoID.Hex()), // GridFS path
+			"updated_at": time.Now(),
 		},
 	}
 
@@ -259,6 +259,9 @@ func uploadHLSToGridFS(fs *gridfs.Bucket, dirPath string, videoID primitive.Obje
 		return fmt.Errorf("could not read processing directory: %w", err)
 	}
 
+	var uploadErrors []string
+	playlistUploaded := false
+
 	for _, file := range files {
 		filePath := filepath.Join(dirPath, file.Name())
 		gridFSFilename := fmt.Sprintf("%s/%s", videoID.Hex(), file.Name())
@@ -266,20 +269,41 @@ func uploadHLSToGridFS(fs *gridfs.Bucket, dirPath string, videoID primitive.Obje
 		fileReader, err := os.Open(filePath)
 		if err != nil {
 			log.Printf("Could not open file %s for GridFS upload: %v", filePath, err)
-			continue // Skip this file and try others
+			uploadErrors = append(uploadErrors, fmt.Sprintf("failed to open %s: %v", file.Name(), err))
+			continue
 		}
-		defer fileReader.Close()
 
 		uploadStream, err := fs.OpenUploadStream(gridFSFilename)
 		if err != nil {
+			fileReader.Close()
 			log.Printf("Could not open GridFS upload stream for %s: %v", gridFSFilename, err)
+			uploadErrors = append(uploadErrors, fmt.Sprintf("failed to create upload stream for %s: %v", file.Name(), err))
 			continue
 		}
-		defer uploadStream.Close()
 
-		if _, err := io.Copy(uploadStream, fileReader); err != nil {
-			log.Printf("Could not copy file %s to GridFS: %v", filePath, err)
+		_, copyErr := io.Copy(uploadStream, fileReader)
+		fileReader.Close()
+		uploadStream.Close()
+
+		if copyErr != nil {
+			log.Printf("Could not copy file %s to GridFS: %v", filePath, copyErr)
+			uploadErrors = append(uploadErrors, fmt.Sprintf("failed to upload %s: %v", file.Name(), copyErr))
+		} else {
+			log.Printf("Successfully uploaded %s to GridFS", gridFSFilename)
+			if file.Name() == "playlist.m3u8" {
+				playlistUploaded = true
+			}
 		}
+	}
+
+	// Critical error: playlist.m3u8 must be uploaded for streaming to work
+	if !playlistUploaded {
+		return fmt.Errorf("critical error: playlist.m3u8 was not uploaded to GridFS")
+	}
+
+	// If we have upload errors, log them but don't fail if playlist is uploaded
+	if len(uploadErrors) > 0 {
+		log.Printf("Some files failed to upload to GridFS: %v", uploadErrors)
 	}
 
 	return nil
@@ -289,9 +313,9 @@ func uploadHLSToGridFS(fs *gridfs.Bucket, dirPath string, videoID primitive.Obje
 func (s *VideoService) updateVideoStatus(ctx context.Context, videoID primitive.ObjectID, status VideoStatus, errorMsg string) {
 	update := bson.M{
 		"$set": bson.M{
-			"status":    status,
-			"error":     errorMsg,
-			"updatedAt": time.Now(),
+			"status":     status,
+			"error":      errorMsg,
+			"updated_at": time.Now(),
 		},
 	}
 
@@ -305,8 +329,8 @@ func (s *VideoService) updateVideoStatus(ctx context.Context, videoID primitive.
 func (s *VideoService) UpdateVideoStatus(ctx context.Context, videoID primitive.ObjectID, status VideoStatus) error {
 	update := bson.M{
 		"$set": bson.M{
-			"status":    status,
-			"updatedAt": time.Now(),
+			"status":     status,
+			"updated_at": time.Now(),
 		},
 	}
 
@@ -420,7 +444,7 @@ func (s *VideoService) UpdateVideo(ctx context.Context, id primitive.ObjectID, r
 		return s.GetVideoByID(ctx, id) // Nothing to update, return current data.
 	}
 
-	updateFields["updatedAt"] = time.Now()
+	updateFields["updated_at"] = time.Now()
 	update := bson.M{"$set": updateFields}
 
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
@@ -542,5 +566,139 @@ func (s *VideoService) GetTrendingVideos(ctx context.Context, limit int, daysBac
 	return videos, nil
 }
 
+// ReprocessFailedVideos finds videos that are marked as COMPLETED but have no HLS path
+// and attempts to upload their existing processed files to GridFS
+func (s *VideoService) ReprocessFailedVideos(ctx context.Context) error {
+	// Find videos that are COMPLETED but have empty HLS paths
+	filter := bson.M{
+		"status": StatusCompleted,
+		"$or": []bson.M{
+			{"hls_path": ""},
+			{"hls_path": bson.M{"$exists": false}},
+		},
+	}
 
+	cursor, err := s.videoCollection.Find(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to find videos for reprocessing: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var videos []Video
+	if err = cursor.All(ctx, &videos); err != nil {
+		return fmt.Errorf("failed to decode videos for reprocessing: %w", err)
+	}
+
+	log.Printf("Found %d videos needing HLS file upload to GridFS", len(videos))
+
+	for _, video := range videos {
+		log.Printf("Reprocessing video %s (%s)", video.ID.Hex(), video.Title)
+		
+		// Check if local processed files exist
+		processedDir := fmt.Sprintf("storage/processed/%s", video.ID.Hex())
+		if _, err := os.Stat(processedDir); os.IsNotExist(err) {
+			log.Printf("No processed files found for video %s, skipping", video.ID.Hex())
+			continue
+		}
+
+		// Upload HLS files to GridFS
+		if err := uploadHLSToGridFS(s.fs, processedDir, video.ID); err != nil {
+			log.Printf("Failed to upload HLS files for video %s: %v", video.ID.Hex(), err)
+			continue
+		}
+
+		// Update video with HLS path
+		update := bson.M{
+			"$set": bson.M{
+				"hls_path":   fmt.Sprintf("%s/playlist.m3u8", video.ID.Hex()),
+				"updated_at": time.Now(),
+			},
+		}
+
+		_, err = s.videoCollection.UpdateOne(ctx, bson.M{"_id": video.ID}, update)
+		if err != nil {
+			log.Printf("Failed to update video %s with HLS path: %v", video.ID.Hex(), err)
+			continue
+		}
+
+		// Clean up local files after successful upload
+		if err := os.RemoveAll(processedDir); err != nil {
+			log.Printf("Failed to clean up processed directory for video %s: %v", video.ID.Hex(), err)
+		}
+
+		log.Printf("Successfully reprocessed video %s", video.ID.Hex())
+	}
+
+	return nil
+}
+
+// MigrateVideoFieldNames fixes videos that have data in camelCase fields instead of snake_case
+func (s *VideoService) MigrateVideoFieldNames(ctx context.Context) error {
+	// Find videos that have hlsPath but empty hls_path
+	filter := bson.M{
+		"hlsPath": bson.M{"$exists": true, "$ne": ""},
+		"$or": []bson.M{
+			{"hls_path": ""},
+			{"hls_path": bson.M{"$exists": false}},
+		},
+	}
+
+	cursor, err := s.videoCollection.Find(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to find videos for field migration: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var videos []bson.M
+	if err = cursor.All(ctx, &videos); err != nil {
+		return fmt.Errorf("failed to decode videos for field migration: %w", err)
+	}
+
+	log.Printf("Found %d videos needing field name migration", len(videos))
+
+	for _, video := range videos {
+		videoID := video["_id"].(primitive.ObjectID)
+		log.Printf("Migrating field names for video %s", videoID.Hex())
+
+		updateFields := bson.M{}
+		unsetFields := bson.M{}
+
+		// Migrate hlsPath to hls_path
+		if hlsPath, exists := video["hlsPath"]; exists && hlsPath != "" {
+			updateFields["hls_path"] = hlsPath
+			unsetFields["hlsPath"] = ""
+		}
+
+		// Migrate updatedAt to updated_at if needed
+		if updatedAt, exists := video["updatedAt"]; exists {
+			updateFields["updated_at"] = updatedAt
+			unsetFields["updatedAt"] = ""
+		}
+
+		// Migrate createdAt to created_at if needed  
+		if createdAt, exists := video["createdAt"]; exists {
+			updateFields["created_at"] = createdAt
+			unsetFields["createdAt"] = ""
+		}
+
+		if len(updateFields) > 0 {
+			update := bson.M{
+				"$set": updateFields,
+			}
+			if len(unsetFields) > 0 {
+				update["$unset"] = unsetFields
+			}
+
+			_, err = s.videoCollection.UpdateOne(ctx, bson.M{"_id": videoID}, update)
+			if err != nil {
+				log.Printf("Failed to migrate field names for video %s: %v", videoID.Hex(), err)
+				continue
+			}
+
+			log.Printf("Successfully migrated field names for video %s", videoID.Hex())
+		}
+	}
+
+	return nil
+}
 
