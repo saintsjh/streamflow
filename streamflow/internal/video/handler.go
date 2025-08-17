@@ -2,8 +2,10 @@ package video
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -171,9 +173,21 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 		c.Set("X-Video-Duration", strconv.FormatFloat(video.Metadata.Duration, 'f', 2, 64))
 	}
 
+	// Get the request scheme and host to construct absolute URLs
+	scheme := "http"
+	if c.Protocol() == "https" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, c.Get("Host"))
+	if c.Get("Host") == "" {
+		// Fallback if Host header is not present
+		baseURL = fmt.Sprintf("%s://localhost:%s", scheme, c.Port())
+	}
+
 	// Serve the HLS playlist file from GridFS
 	playlistName := fmt.Sprintf("%s/playlist.m3u8", video.ID.Hex())
 	fmt.Printf("🔍 [VIDEO] Looking for GridFS file: %s\n", playlistName)
+	fmt.Printf("🌐 [VIDEO] Base URL for absolute paths: %s\n", baseURL)
 	
 	downloadStream, err := h.videoService.DownloadFromGridFS(c.Context(), playlistName)
 	if err != nil {
@@ -229,16 +243,44 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Empty playlist file"})
 	}
 	
-	// Send the content directly
-	c.Set("Content-Length", strconv.Itoa(len(fullContent)))
-	err = c.Send(fullContent)
+	// Process playlist content to make segment URLs absolute
+	playlistContent := string(fullContent)
+	processedContent := h.processPlaylistForAbsoluteURLs(playlistContent, baseURL, video.ID.Hex())
+	processedBytes := []byte(processedContent)
+	
+	// Send the processed content directly
+	c.Set("Content-Length", strconv.Itoa(len(processedBytes)))
+	err = c.Send(processedBytes)
 	if err != nil {
 		fmt.Printf("❌ [VIDEO] Failed to send content for %s: %v\n", playlistName, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send playlist"})
 	}
 	
-	fmt.Printf("✅ [VIDEO] Successfully sent playlist: %s (%d bytes)\n", playlistName, len(fullContent))
+	fmt.Printf("✅ [VIDEO] Successfully sent playlist: %s (%d bytes)\n", playlistName, len(processedBytes))
 	return nil
+}
+
+// processPlaylistForAbsoluteURLs converts relative segment URLs in HLS playlist to absolute URLs
+func (h *VideoHandler) processPlaylistForAbsoluteURLs(playlistContent, baseURL, videoID string) string {
+	lines := strings.Split(playlistContent, "\n")
+	
+	for i, line := range lines {
+		// Skip empty lines and HLS directives (lines starting with #)
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		
+		// Process segment file references (usually .ts files)
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasSuffix(trimmedLine, ".ts") && !strings.HasPrefix(trimmedLine, "http") {
+			// Convert relative path to absolute URL
+			absoluteURL := fmt.Sprintf("%s/stream/%s/segments/%s", baseURL, videoID, trimmedLine)
+			lines[i] = absoluteURL
+			fmt.Printf("🔗 [VIDEO] Converted segment URL: %s -> %s\n", trimmedLine, absoluteURL)
+		}
+	}
+	
+	return strings.Join(lines, "\n")
 }
 
 // ServeVideoSegment serves individual video segments for HLS streaming with timestamp support
@@ -279,7 +321,15 @@ func (h *VideoHandler) ServeVideoSegment(c *fiber.Ctx) error {
 	}
 	defer downloadStream.Close()
 
-	return c.SendStream(downloadStream)
+	// Buffer the entire segment into memory before sending to avoid streaming issues
+	segmentData, err := io.ReadAll(downloadStream)
+	if err != nil {
+		log.Printf("❌ [VIDEO] Failed to read segment %s from GridFS: %v", segmentFilename, err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read segment"})
+	}
+
+	c.Set("Content-Length", strconv.Itoa(len(segmentData)))
+	return c.Send(segmentData)
 }
 
 // GetVideoThumbnail serves the video thumbnail

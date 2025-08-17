@@ -76,66 +76,27 @@ export default function VideoScreen() {
   // Update player source when video data is loaded
   useEffect(() => {
     if (video?.Status === 'COMPLETED' && video?.HLSPath && id) {
-      // Try both the stream endpoint and the direct HLS path
-      const streamUrl = `${API_BASE_URL}/stream/${id}`;   
+      const streamUrl = `${API_BASE_URL}/stream/${id}/playlist.m3u8`;
       
-      console.log('🎥 [VIDEO] Available video URLs:');
-      console.log('  Stream URL:', streamUrl);      console.log('🎥 [VIDEO] Video HLS Path:', video.HLSPath);
+      console.log('🎥 [VIDEO] Loading video stream:', streamUrl);
+      console.log('🎥 [VIDEO] Video HLS Path:', video.HLSPath);
       
-              // Debug: First fetch and examine the HLS playlist content
-        console.log('🎥 [VIDEO] Fetching HLS playlist to debug content...');
-        
-        (async () => {
-          try {
-            // Get token for authenticated request (like other API calls)
-            const token = await AsyncStorage.getItem('userToken');
-            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-            
-            const response = await axios.get(streamUrl, {
-              timeout: 10000,
-              validateStatus: () => true, // Don't throw on non-2xx status
-              headers
-            });
-            
-            console.log('📋 [VIDEO] HLS Response Status:', response.status);
-            console.log('📋 [VIDEO] HLS Headers:', {
-              'content-type': response.headers['content-type'],
-              'content-length': response.headers['content-length'],
-              'cache-control': response.headers['cache-control']
-            });
-            
-            if (response.status !== 200) {
-              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            const playlistContent = response.data;
-            console.log('📝 [VIDEO] HLS Playlist Content:');
-            console.log(playlistContent);
-            console.log('📝 [VIDEO] Playlist length:', playlistContent.length);
-            
-            // Check if it looks like a valid HLS playlist
-            if (playlistContent.includes('#EXTM3U')) {
-              console.log('✅ [VIDEO] Valid HLS playlist detected');
-            } else {
-              console.log('❌ [VIDEO] Invalid HLS playlist - missing #EXTM3U header');
-            }
-            
-            // Now try to load it in the player
-            console.log('🎬 [VIDEO] Loading stream in expo-video player...');
-            await player.replaceAsync(streamUrl);
-            console.log('✅ [VIDEO] Player loaded successfully');
-            
-          } catch (error: any) {
-            console.error('❌ [VIDEO] HLS stream error:', error);
-            console.error('❌ [VIDEO] Error details:', {
-              name: error.name,
-              message: error.message,
-              status: error.response?.status,
-              statusText: error.response?.statusText,
-              stack: error.stack?.substring(0, 500)
-            });
-          }
-        })();
+      // Load the video in the player - the player will handle fetching the HLS playlist
+      (async () => {
+        try {
+          console.log('🎬 [VIDEO] Loading stream in expo-video player...');
+          await player.replaceAsync({uri: streamUrl});
+          console.log('✅ [VIDEO] Player loaded successfully');
+          
+        } catch (error: any) {
+          console.error('❌ [VIDEO] HLS stream error:', error);
+          console.error('❌ [VIDEO] Error details:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack?.substring(0, 500)
+          });
+        }
+      })();
     } else {
       console.log('⚠️ [VIDEO] Cannot load video:', {
         status: video?.Status,
@@ -160,6 +121,8 @@ export default function VideoScreen() {
   useEffect(() => {
     if (!player) return;
 
+    console.log('🎥 [VIDEO] Player initialized:', player);
+
     const subscription = player.addListener('playingChange', (event) => {
       console.log('📺 [VIDEO] Playing state changed:', event.isPlaying);
       setIsPlaying(event.isPlaying);
@@ -178,7 +141,7 @@ export default function VideoScreen() {
       setBuffering(event.status === 'loading');
       
       if (event.status === 'error') {
-        console.error('❌ [VIDEO] Player error detected');
+        console.error('❌ [VIDEO] Player error detected, error:', event.error);
       }
     });
 
@@ -299,7 +262,7 @@ export default function VideoScreen() {
           const token = await AsyncStorage.getItem('userToken');
           if (token) {
             console.log('📡 [VIDEO] Updating timestamp on backend:', time);
-            await axios.get(`${API_BASE_URL}/video/${id}/timestamp?current=${time}`, {
+            await axios.get(`${API_BASE_URL}/api/video/${id}/timestamp?current=${time}`, {
               headers: { 'Authorization': `Bearer ${token}` },
             });
             console.log('✅ [VIDEO] Timestamp updated on backend');

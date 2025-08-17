@@ -12,12 +12,11 @@ import (
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
-	// Apply CORS middleware
 	s.App.Use(cors.New(cors.Config{
 		AllowOrigins:     "*",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowHeaders:     "Accept,Authorization,Content-Type",
-		AllowCredentials: false, // credentials require explicit origins
+		AllowCredentials: false, 
 		MaxAge:           300,
 	}))
 
@@ -49,7 +48,7 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	api.Post("/video/migrate", videoHandler.MigrateVideoFields)
 
 	// needs to be authenticated
-	s.App.Get("/stream/:id", videoHandler.StreamVideo)
+	s.App.Get("/stream/:id/playlist.m3u8", videoHandler.StreamVideo)
 	s.App.Get("/stream/:id/segments/:segment", videoHandler.ServeVideoSegment)
 	s.App.Get("/thumbnail/:id", videoHandler.GetVideoThumbnail)
 	s.App.Get("/video/:id/timestamp", videoHandler.GetVideoTimestamp)
