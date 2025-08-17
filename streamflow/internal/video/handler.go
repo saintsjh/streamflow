@@ -186,33 +186,24 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 
 	// Serve the HLS playlist file from GridFS
 	playlistName := fmt.Sprintf("%s/playlist.m3u8", video.ID.Hex())
-	fmt.Printf("🔍 [VIDEO] Looking for GridFS file: %s\n", playlistName)
-	fmt.Printf("🌐 [VIDEO] Base URL for absolute paths: %s\n", baseURL)
 	
 	downloadStream, err := h.videoService.DownloadFromGridFS(c.Context(), playlistName)
 	if err != nil {
-		fmt.Printf("❌ [VIDEO] GridFS download failed for %s: %v\n", playlistName, err)
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Playlist not found"})
 	}
 	defer downloadStream.Close()
 
-	fmt.Printf("✅ [VIDEO] GridFS file found, serving HLS playlist: %s\n", playlistName)
-
 	// Read the content to debug what we're actually serving
 	buffer := make([]byte, 512) // Read first 512 bytes
-	n, readErr := downloadStream.Read(buffer)
+	_, readErr := downloadStream.Read(buffer)
 	if readErr != nil && readErr.Error() != "EOF" {
-		fmt.Printf("❌ [VIDEO] Failed to read from GridFS stream: %v\n", readErr)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read playlist"})
 	}
-	
-	fmt.Printf("📝 [VIDEO] Playlist content preview (%d bytes): %s\n", n, string(buffer[:n]))
 	
 	// Reset stream position (create new stream since we can't seek)
 	downloadStream.Close()
 	downloadStream, err = h.videoService.DownloadFromGridFS(c.Context(), playlistName)
 	if err != nil {
-		fmt.Printf("❌ [VIDEO] Failed to re-open GridFS stream: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to re-open playlist"})
 	}
 	defer downloadStream.Close()
@@ -231,15 +222,11 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 			if readErr.Error() == "EOF" {
 				break
 			}
-			fmt.Printf("❌ [VIDEO] Error reading GridFS stream: %v\n", readErr)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read playlist"})
 		}
 	}
 	
-	fmt.Printf("📊 [VIDEO] Read complete playlist: %d total bytes\n", len(fullContent))
-	
 	if len(fullContent) == 0 {
-		fmt.Printf("❌ [VIDEO] Empty playlist file: %s\n", playlistName)
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Empty playlist file"})
 	}
 	
@@ -252,11 +239,9 @@ func (h *VideoHandler) StreamVideo(c *fiber.Ctx) error {
 	c.Set("Content-Length", strconv.Itoa(len(processedBytes)))
 	err = c.Send(processedBytes)
 	if err != nil {
-		fmt.Printf("❌ [VIDEO] Failed to send content for %s: %v\n", playlistName, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send playlist"})
 	}
 	
-	fmt.Printf("✅ [VIDEO] Successfully sent playlist: %s (%d bytes)\n", playlistName, len(processedBytes))
 	return nil
 }
 
@@ -276,7 +261,6 @@ func (h *VideoHandler) processPlaylistForAbsoluteURLs(playlistContent, baseURL, 
 			// Convert relative path to absolute URL
 			absoluteURL := fmt.Sprintf("%s/stream/%s/segments/%s", baseURL, videoID, trimmedLine)
 			lines[i] = absoluteURL
-			fmt.Printf("🔗 [VIDEO] Converted segment URL: %s -> %s\n", trimmedLine, absoluteURL)
 		}
 	}
 	

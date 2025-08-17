@@ -78,42 +78,20 @@ export default function VideoScreen() {
     if (video?.Status === 'COMPLETED' && video?.HLSPath && id) {
       const streamUrl = `${API_BASE_URL}/stream/${id}/playlist.m3u8`;
       
-      console.log('🎥 [VIDEO] Loading video stream:', streamUrl);
-      console.log('🎥 [VIDEO] Video HLS Path:', video.HLSPath);
-      
       // Load the video in the player - the player will handle fetching the HLS playlist
       (async () => {
         try {
-          console.log('🎬 [VIDEO] Loading stream in expo-video player...');
           await player.replaceAsync({uri: streamUrl});
-          console.log('✅ [VIDEO] Player loaded successfully');
-          
         } catch (error: any) {
-          console.error('❌ [VIDEO] HLS stream error:', error);
-          console.error('❌ [VIDEO] Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack?.substring(0, 500)
-          });
+          console.error('HLS stream error:', error.message);
         }
       })();
-    } else {
-      console.log('⚠️ [VIDEO] Cannot load video:', {
-        status: video?.Status,
-        hasHLSPath: !!video?.HLSPath,
-        hasId: !!id,
-        hlsPath: video?.HLSPath
-      });
     }
   }, [video, id, player]);
 
   useEffect(() => {
-    console.log('🚀 [VIDEO] useEffect triggered with ID:', id);
     if (id) {
-      console.log('📱 [VIDEO] ID exists, calling loadVideo');
       loadVideo();
-    } else {
-      console.log('⚠️ [VIDEO] No ID provided');
     }
   }, [id]);
 
@@ -121,10 +99,7 @@ export default function VideoScreen() {
   useEffect(() => {
     if (!player) return;
 
-    console.log('🎥 [VIDEO] Player initialized:', player);
-
     const subscription = player.addListener('playingChange', (event) => {
-      console.log('📺 [VIDEO] Playing state changed:', event.isPlaying);
       setIsPlaying(event.isPlaying);
     });
 
@@ -137,11 +112,10 @@ export default function VideoScreen() {
     });
 
     const statusSubscription = player.addListener('statusChange', (event) => {
-      console.log('📺 [VIDEO] Status changed:', event.status);
       setBuffering(event.status === 'loading');
       
       if (event.status === 'error') {
-        console.error('❌ [VIDEO] Player error detected, error:', event.error);
+        console.error('Player error:', event.error);
       }
     });
 
@@ -168,120 +142,72 @@ export default function VideoScreen() {
   }, [showControls, isPlaying]);
 
   const loadVideo = async () => {
-    console.log('🎬 [VIDEO] Starting loadVideo for ID:', id);
     try {
       const token = await AsyncStorage.getItem('userToken');
-      console.log('🔑 [VIDEO] Retrieved token:', token ? 'Present' : 'Missing');
       
       if (!token) {
-        console.log('❌ [VIDEO] No token found, redirecting to login');
         Alert.alert('Authentication Error', 'Please log in again.');
         await logout();
         return;
       }
 
-      console.log('📡 [VIDEO] Making API request to:', `${API_BASE_URL}/api/video/${id}`);
       const response = await axios.get(`${API_BASE_URL}/api/video/${id}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
 
-      console.log('✅ [VIDEO] API Response received:', {
-        status: response.status,
-        data: response.data
-      });
-      
-      console.log('📊 [VIDEO] Video metadata:', {
-        ID: response.data.ID,
-        Title: response.data.Title,
-        Status: response.data.Status,
-        HLSPath: response.data.HLSPath, // Check both cases
-        hlsPath: response.data.hlsPath,
-        Duration: response.data.Metadata?.Duration,
-        Error: response.data.Error
-      });
-
       setVideo(response.data);
       setDuration(response.data.Metadata.Duration);
       
-      console.log('💾 [VIDEO] Video state updated successfully');
     } catch (error: any) {
-      console.error('❌ [VIDEO] Error loading video:', error);
-      console.log('🔍 [VIDEO] Error details:', {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-        config: {
-          url: error.config?.url,
-          method: error.config?.method,
-          headers: error.config?.headers
-        }
-      });
-      
+      console.error('Error loading video:', error);
       const errorMessage = error.response?.data?.error || 'Failed to load video. Please try again.';
       Alert.alert('Error', errorMessage);
     } finally {
-      console.log('🏁 [VIDEO] loadVideo completed, setting isLoading to false');
       setIsLoading(false);
     }
   };
 
   const handlePlayPause = async () => {
-    console.log('▶️ [VIDEO] handlePlayPause called, current state:', { isPlaying });
     if (player) {
       try {
         if (isPlaying) {
-          console.log('⏸️ [VIDEO] Pausing video');
           player.pause();
         } else {
-          console.log('▶️ [VIDEO] Playing video');
           player.play();
         }
         setIsPlaying(!isPlaying);
-        console.log('✅ [VIDEO] Play/pause successful, new state:', !isPlaying);
       } catch (error) {
-        console.error('❌ [VIDEO] Error in handlePlayPause:', error);
+        console.error('Error in handlePlayPause:', error);
       }
-    } else {
-      console.log('⚠️ [VIDEO] player is null');
     }
   };
 
   const handleSeek = async (time: number) => {
-    console.log('⏩ [VIDEO] handleSeek called with time:', time);
     if (player && video) {
       try {
-        console.log('🎯 [VIDEO] Setting video position to:', time, 'seconds');
         player.currentTime = time;
         setCurrentTime(time);
-        console.log('✅ [VIDEO] Seek successful');
         
         // Update backend with seek time for analytics
         try {
           const token = await AsyncStorage.getItem('userToken');
           if (token) {
-            console.log('📡 [VIDEO] Updating timestamp on backend:', time);
             await axios.get(`${API_BASE_URL}/api/video/${id}/timestamp?current=${time}`, {
               headers: { 'Authorization': `Bearer ${token}` },
             });
-            console.log('✅ [VIDEO] Timestamp updated on backend');
           }
         } catch (error) {
-          console.log('⚠️ [VIDEO] Failed to update timestamp:', error);
         }
       } catch (error) {
-        console.error('❌ [VIDEO] Error in handleSeek:', error);
+        console.error('Error in handleSeek:', error);
       }
-    } else {
-      console.log('⚠️ [VIDEO] Cannot seek - player or video missing');
     }
   };
 
   const handleVideoPress = () => {
-    console.log('👆 [VIDEO] Video pressed, toggling controls. Current state:', showControls);
     setShowControls(!showControls);
-    console.log('🎛️ [VIDEO] Controls will be:', !showControls ? 'shown' : 'hidden');
   };
 
   const handleFullscreen = () => {
@@ -326,7 +252,6 @@ export default function VideoScreen() {
   };
 
   if (isLoading) {
-    console.log('⏳ [VIDEO] Rendering loading state');
     return (
       <SafeAreaView style={styles.container}>
         <BackHeader title="Loading..." />
@@ -339,7 +264,6 @@ export default function VideoScreen() {
   }
 
   if (!video) {
-    console.log('❌ [VIDEO] Rendering error state - no video data');
     return (
       <SafeAreaView style={styles.container}>
         <BackHeader title="Video Not Found" />
@@ -355,16 +279,6 @@ export default function VideoScreen() {
 
   const statusInfo = getVideoStatus(video.Status);
   
-  console.log('🎯 [VIDEO] Rendering video component with:', {
-    videoID: video.ID,
-    title: video.Title,
-    status: video.Status,
-    statusInfo: statusInfo,
-    hlsPath: video.HLSPath,
-    isCompleted: video.Status === 'COMPLETED',
-    hasHLSPath: !!video.HLSPath
-  });
-
   return (
     <SafeAreaView style={[styles.container, isFullscreen && styles.fullscreenContainer]}>
       {!isFullscreen && (
@@ -381,7 +295,6 @@ export default function VideoScreen() {
       <View style={[styles.videoContainer, isFullscreen && styles.fullscreenVideoContainer]}>
         {video.Status === 'COMPLETED' && video.HLSPath ? (
           <>
-            {console.log('🎥 [VIDEO] Rendering video player with stream URL:', `${API_BASE_URL}/stream/${id}`)}
             <VideoView
               style={styles.video}
               player={player}
@@ -465,12 +378,6 @@ export default function VideoScreen() {
           </>
         ) : (
           <>
-            {console.log('⚠️ [VIDEO] Rendering processing container - video not ready for playback:', {
-              status: video.Status,
-              hlsPath: video.HLSPath,
-              error: video.Error,
-              statusInfo: statusInfo
-            })}
             <View style={styles.processingContainer}>
               <Text style={styles.processingTitle}>Video Processing</Text>
               <Text style={[styles.statusText, { color: statusInfo.color }]}>
