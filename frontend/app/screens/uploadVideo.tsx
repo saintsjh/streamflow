@@ -10,10 +10,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BackHeader from '@/components/BackHeader';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,6 +27,7 @@ type VideoUploadData = {
   title: string;
   description: string;
   videoFile: DocumentPicker.DocumentPickerAsset | null;
+  thumbnailFile: ImagePicker.ImagePickerAsset | null;
 };
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
@@ -41,6 +44,7 @@ export default function UploadVideoScreen() {
     title: '',
     description: '',
     videoFile: null,
+    thumbnailFile: null,
   });
 
   // Validation rules
@@ -107,6 +111,24 @@ export default function UploadVideoScreen() {
     }
   };
 
+  const handlePickThumbnail = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setUploadData({ ...uploadData, thumbnailFile: result.assets[0] });
+      }
+    } catch (error) {
+      console.error('Error picking thumbnail:', error);
+      Alert.alert('Error', 'Failed to select thumbnail image. Please try again.');
+    }
+  };
+
   const handleUploadVideo = async () => {
     if (!validateForm()) {
       Alert.alert('Validation Error', 'Please fix the errors before uploading your video.');
@@ -134,6 +156,15 @@ export default function UploadVideoScreen() {
         type: uploadData.videoFile!.mimeType || 'video/mp4',
         name: uploadData.videoFile!.name || 'video.mp4',
       } as any);
+
+      // Append the thumbnail file if it exists
+      if (uploadData.thumbnailFile) {
+        formData.append('thumbnail', {
+          uri: uploadData.thumbnailFile.uri,
+          type: 'image/jpeg',
+          name: 'thumbnail.jpg',
+        } as any);
+      }
 
       const response = await axios.post(`${API_BASE_URL}/api/video/upload`, formData, {
         headers: {
@@ -237,6 +268,28 @@ export default function UploadVideoScreen() {
             </TouchableOpacity>
             
             {errors.videoFile && <Text style={styles.errorText}>{errors.videoFile}</Text>}
+          </View>
+
+          {/* Thumbnail Selection */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Thumbnail</Text>
+            <TouchableOpacity
+              style={styles.filePickerButton}
+              onPress={handlePickThumbnail}
+              disabled={isLoading}
+            >
+              {uploadData.thumbnailFile ? (
+                <Image source={{ uri: uploadData.thumbnailFile.uri }} style={styles.thumbnailPreview} />
+              ) : (
+                <View style={styles.filePickerContent}>
+                  <Text style={styles.filePickerIcon}>🖼️</Text>
+                  <Text style={styles.filePickerText}>Tap to select thumbnail</Text>
+                  <Text style={styles.filePickerSubtext}>
+                    Optional • 16:9 aspect ratio recommended
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
           </View>
 
           {/* Basic Information */}
@@ -382,6 +435,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     textAlign: 'center',
+  },
+  thumbnailPreview: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
   },
   fileInfo: {
     alignItems: 'center',

@@ -57,7 +57,19 @@ func (h *VideoHandler) UploadVideo(c *fiber.Ctx) error {
 	}
 	defer file.Close()
 
-    video, err := h.videoService.CreateVideo(c.Context(), file, title, description, userID)
+	// Handle optional thumbnail upload
+	var thumbnailFile io.Reader
+	thumbnailHeader, err := c.FormFile("thumbnail")
+	if err == nil {
+		thumbnail, err := thumbnailHeader.Open()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open thumbnail file"})
+		}
+		defer thumbnail.Close()
+		thumbnailFile = thumbnail
+	}
+
+    video, err := h.videoService.CreateVideo(c.Context(), file, title, description, userID, thumbnailFile)
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
     }
@@ -342,7 +354,7 @@ func (h *VideoHandler) GetVideoThumbnail(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid thumbnail ID"})
 	}
 
-	downloadStream, err := h.videoService.fs.OpenDownloadStream(thumbnailID)
+	downloadStream, err := h.videoService.DownloadFromGridFSByID(c.Context(), thumbnailID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Thumbnail not found in GridFS"})
 	}

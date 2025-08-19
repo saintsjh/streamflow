@@ -45,7 +45,7 @@ func NewVideoService(db *mongo.Database) *VideoService {
 }
 
 // CreateVideo now accepts a primitive.ObjectID for the userID and includes it in the new video document.
-func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, description string, userID primitive.ObjectID) (*Video, error) {
+func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, description string, userID primitive.ObjectID, thumbnail io.Reader) (*Video, error) {
 	videoID := primitive.NewObjectID()
 	newVideo := &Video{
 		ID:          videoID,
@@ -104,12 +104,27 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 		return nil, fmt.Errorf("video metadata validation failed: %w", err)
 	}
 
-	// Generate thumbnail and upload to GridFS from the temporary file
-	thumbnailGridFSID, err := s.generateAndUploadThumbnail(tempFilePath, videoID)
-	if err != nil {
-		log.Printf("Failed to generate or upload thumbnail: %v", err)
-		// Don't fail the upload if thumbnail generation fails, but log it.
+	// Handle thumbnail
+	var thumbnailGridFSID primitive.ObjectID
+	if thumbnail != nil {
+		// Upload provided thumbnail
+		var err error
+		thumbnailGridFSID, err = s.uploadThumbnail(thumbnail, videoID)
+		if err != nil {
+			log.Printf("Failed to upload provided thumbnail: %v", err)
+			// Proceed without a thumbnail if upload fails
+		}
 	} else {
+		// Generate thumbnail from video
+		var err error
+		thumbnailGridFSID, err = s.generateAndUploadThumbnail(tempFilePath, videoID)
+		if err != nil {
+			log.Printf("Failed to generate or upload thumbnail: %v", err)
+			// Don't fail the upload if thumbnail generation fails, but log it.
+		}
+	}
+
+	if thumbnailGridFSID != primitive.NilObjectID {
 		newVideo.ThumbnailPath = thumbnailGridFSID.Hex() // Store GridFS ID
 	}
 
@@ -171,6 +186,21 @@ func (s *VideoService) generateAndUploadThumbnail(videoPath string, videoID prim
 	// Clean up local thumbnail file
 	if err := os.Remove(thumbnailPath); err != nil {
 		log.Printf("Failed to remove temporary thumbnail file: %v", err)
+	}
+
+	return thumbnailID, nil
+}
+
+func (s *VideoService) uploadThumbnail(thumbnail io.Reader, videoID primitive.ObjectID) (primitive.ObjectID, error) {
+	thumbnailID := primitive.NewObjectID()
+	uploadStream, err := s.fs.OpenUploadStreamWithID(thumbnailID, fmt.Sprintf("%s_thumbnail.jpg", videoID.Hex()))
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to open GridFS upload stream for thumbnail: %w", err)
+	}
+	defer uploadStream.Close()
+
+	if _, err := io.Copy(uploadStream, thumbnail); err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to upload thumbnail to GridFS: %w", err)
 	}
 
 	return thumbnailID, nil
@@ -397,6 +427,15 @@ func (s *VideoService) DownloadFromGridFS(ctx context.Context, filename string) 
 	return downloadStream, nil
 }
 
+func (s *VideoService) DownloadFromGridFSByID(ctx context.Context, id primitive.ObjectID) (*gridfs.DownloadStream, error) {
+	downloadStream, err := s.fs.OpenDownloadStream(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open download stream for id %s: %w", id.Hex(), err)
+	}
+	return downloadStream, nil
+}
+
+
 // GetVideoByID retrieves a single video by its ID.
 func (s *VideoService) GetVideoByID(ctx context.Context, id primitive.ObjectID) (*Video, error) {
 	var video Video
@@ -470,25 +509,38 @@ func (s *VideoService) DeleteVideo(ctx context.Context, id primitive.ObjectID) e
 		return err
 	}
 
-	// Delete the raw video file
-	if video.FilePath != "" {
-		if err := os.Remove(video.FilePath); err != nil && !os.IsNotExist(err) {
-			log.Printf("Failed to delete raw video file %s: %v", video.FilePath, err)
+	// Delete the original video file from GridFS
+	if fileID, err := primitive.ObjectIDFromHex(video.ID.Hex()); err == nil {
+		if err := s.fs.Delete(fileID); err != nil {
+			log.Printf("Failed to delete original video file from GridFS %s: %v", video.ID.Hex(), err)
 		}
 	}
 
-	// Delete the thumbnail file
+	// Delete the thumbnail file from GridFS
 	if video.ThumbnailPath != "" {
-		if err := os.Remove(video.ThumbnailPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("Failed to delete thumbnail file %s: %v", video.ThumbnailPath, err)
+		if thumbnailID, err := primitive.ObjectIDFromHex(video.ThumbnailPath); err == nil {
+			if err := s.fs.Delete(thumbnailID); err != nil {
+				log.Printf("Failed to delete thumbnail file from GridFS %s: %v", video.ThumbnailPath, err)
+			}
 		}
 	}
 
-	// Delete the processed HLS files directory
+	// Delete HLS segments and playlist from GridFS
 	if video.HLSPath != "" {
-		processedDir := filepath.Dir(video.HLSPath)
-		if err := os.RemoveAll(processedDir); err != nil && !os.IsNotExist(err) {
-			log.Printf("Failed to delete processed video directory %s: %v", processedDir, err)
+		// Find all files related to the videoID in GridFS and delete them
+		prefix := fmt.Sprintf("%s/", video.ID.Hex())
+		cursor, err := s.fs.Find(bson.M{"filename": bson.M{"$regex": prefix}})
+		if err == nil {
+			for cursor.Next(ctx) {
+				var file bson.M
+				if err := cursor.Decode(&file); err == nil {
+					fileID := file["_id"].(primitive.ObjectID)
+					if err := s.fs.Delete(fileID); err != nil {
+						log.Printf("Failed to delete HLS file %s from GridFS: %v", file["filename"], err)
+					}
+				}
+			}
+			cursor.Close(ctx)
 		}
 	}
 
