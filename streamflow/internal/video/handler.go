@@ -21,31 +21,51 @@ func NewVideoHandler(videoService *VideoService) *VideoHandler {
 }
 
 func (h *VideoHandler) UploadVideo(c *fiber.Ctx) error {
-	//get user id from context
+	//get user id from context (JWT middleware stores it as string)
 	userIDStr, ok := c.Locals("user_id").(string)
 	if !ok {
+		log.Println("Authentication failed: user_id not found in context")
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
 	}
 	
+	// Convert string to ObjectID
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
+		log.Printf("Invalid user ID format: %s", userIDStr)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid user ID"})
 	}
 
 	title := c.FormValue("title")
 	description := c.FormValue("description")
+	log.Printf("Processing video upload: '%s' for user %s", title, userID.Hex())
 
-	if title == ""{
+	if title == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Title is required"})
 	}
-	
+
 	fileHeader, err := c.FormFile("video")
 	if err != nil {
+		log.Printf("Error getting video file: %v", err)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Video file is required"})
+	}
+
+	// Handle optional thumbnail upload
+	var thumbnail io.Reader
+	var thumbnailCloser io.Closer
+	thumbnailHeader, err := c.FormFile("thumbnail")
+	if err == nil {
+		thumbFile, err := thumbnailHeader.Open()
+		if err != nil {
+			log.Printf("Error opening thumbnail file: %v", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open thumbnail file"})
+		}
+		thumbnail = thumbFile
+		thumbnailCloser = thumbFile
 	}
 
 	// Validate the uploaded file
 	if err := ValidateVideoFile(fileHeader); err != nil {
+		log.Printf("Video file validation failed: %v", err)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
@@ -53,28 +73,26 @@ func (h *VideoHandler) UploadVideo(c *fiber.Ctx) error {
 
 	file, err := fileHeader.Open()
 	if err != nil {
+		log.Printf("Error opening video file: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open file"})
 	}
 	defer file.Close()
 
-	// Handle optional thumbnail upload
-	var thumbnailFile io.Reader
-	thumbnailHeader, err := c.FormFile("thumbnail")
-	if err == nil {
-		thumbnail, err := thumbnailHeader.Open()
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open thumbnail file"})
+	video, err := h.videoService.CreateVideo(c.Context(), file, title, description, userID, thumbnail)
+	if err != nil {
+		if thumbnailCloser != nil {
+			thumbnailCloser.Close()
 		}
-		defer thumbnail.Close()
-		thumbnailFile = thumbnail
+		log.Printf("Error creating video: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-    video, err := h.videoService.CreateVideo(c.Context(), file, title, description, userID, thumbnailFile)
-    if err != nil {
-        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-    }
+	if thumbnailCloser != nil {
+		thumbnailCloser.Close()
+	}
 
-    return c.Status(fiber.StatusCreated).JSON(video)
+	log.Printf("Video uploaded successfully: %s", video.Title)
+	return c.Status(fiber.StatusCreated).JSON(video)
 }
 
 func (h *VideoHandler) ListVideos(c *fiber.Ctx) error {
@@ -330,7 +348,8 @@ func (h *VideoHandler) ServeVideoSegment(c *fiber.Ctx) error {
 
 // GetVideoThumbnail serves the video thumbnail
 func (h *VideoHandler) GetVideoThumbnail(c *fiber.Ctx) error {
-	videoID, err := primitive.ObjectIDFromHex(c.Params("id"))
+	videoIDParam := c.Params("id")
+	videoID, err := primitive.ObjectIDFromHex(videoIDParam)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid video ID"})
 	}
@@ -346,21 +365,31 @@ func (h *VideoHandler) GetVideoThumbnail(c *fiber.Ctx) error {
 
 	// Set proper headers for image
 	c.Set("Content-Type", "image/jpeg")
-	c.Set("Cache-Control", "public, max-age=86400") // Cache thumbnails for 24 hours
+	c.Set("Cache-Control", "public, max-age=86400")
 
-	// Serve the thumbnail file from GridFS by its ID
+	// Try GridFS ObjectID first (newer format)
 	thumbnailID, err := primitive.ObjectIDFromHex(video.ThumbnailPath)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid thumbnail ID"})
+	if err == nil {
+		downloadStream, err := h.videoService.DownloadFromGridFSByID(c.Context(), thumbnailID)
+		if err != nil {
+			log.Printf("GridFS thumbnail error for %s: %v", thumbnailID.Hex(), err)
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Thumbnail not found in storage"})
+		}
+		defer downloadStream.Close()
+		
+		// Read the stream into memory to avoid SendStream issues
+		thumbnailData, err := io.ReadAll(downloadStream)
+		if err != nil {
+			log.Printf("Failed to read thumbnail data for %s: %v", thumbnailID.Hex(), err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read thumbnail"})
+		}
+		
+		c.Set("Content-Length", strconv.Itoa(len(thumbnailData)))
+		return c.Send(thumbnailData)
 	}
 
-	downloadStream, err := h.videoService.DownloadFromGridFSByID(c.Context(), thumbnailID)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Thumbnail not found in GridFS"})
-	}
-	defer downloadStream.Close()
-
-	return c.SendStream(downloadStream)
+	// Not a GridFS ID, treat as file path
+	return c.SendFile(video.ThumbnailPath)
 }
 
 // GetVideoTimestamp returns the current timestamp and duration information

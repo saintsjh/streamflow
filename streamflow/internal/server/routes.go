@@ -7,21 +7,11 @@ import (
 	"streamflow/internal/video"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/websocket/v2"
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
-	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
-		AllowHeaders:     "Accept,Authorization,Content-Type",
-		AllowCredentials: false, 
-		MaxAge:           300,
-	}))
-
 	s.App.Get("/", s.HelloWorldHandler)
-
 	s.App.Get("/health", s.healthHandler)
 
 	// User routes (public routes)
@@ -31,7 +21,6 @@ func (s *FiberServer) RegisterFiberRoutes() {
 
 	// Protected routes
 	api := s.App.Group("/api", s.authMiddleware)
-
 	api.Get("/user/me", userHandler.GetUser)
 
 	// Video routes
@@ -47,7 +36,7 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	api.Post("/video/reprocess", videoHandler.ReprocessVideos)
 	api.Post("/video/migrate", videoHandler.MigrateVideoFields)
 
-	// needs to be authenticated
+	// Public routes (no auth needed)
 	s.App.Get("/stream/:id/playlist.m3u8", videoHandler.StreamVideo)
 	s.App.Get("/stream/:id/segments/:segment", videoHandler.ServeVideoSegment)
 	s.App.Get("/thumbnail/:id", videoHandler.GetVideoThumbnail)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"streamflow/internal/config"
 	"streamflow/internal/database"
@@ -22,11 +23,24 @@ type FiberServer struct {
 	videoService      *video.VideoService
 	livestreamService *livestream.LivestreamService
 	cfg               *config.Config
+	maxFileSize       int64 // Store for error messages
 }
 
 func New(cfg *config.Config) *FiberServer {
+	// Add some buffer to the configured max file size for form data overhead (video + thumbnail + form fields)
+	bodyLimit := cfg.Video.MaxFileSize + (10 * 1024 * 1024) // Add 10MB buffer for form data overhead
+	
+	server := &FiberServer{
+		cfg:         cfg,
+		maxFileSize: cfg.Video.MaxFileSize,
+	}
+
 	app := fiber.New(fiber.Config{
-		ErrorHandler: customErrorHandler,
+		ErrorHandler: server.customErrorHandler, // Use method instead of standalone function
+		BodyLimit:    int(bodyLimit), // Use configured max file size + buffer
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	})
 
 	db := database.New()
@@ -35,15 +49,13 @@ func New(cfg *config.Config) *FiberServer {
 	videoService := video.NewVideoService(db.GetDatabase())
 	livestreamService := livestream.NewLiveStreamService(db.GetDatabase())
 
-	server := &FiberServer{
-		App:               app,
-		db:                db,
-		userService:       userService,
-		jwtService:        jwtService,
-		videoService:      videoService,
-		livestreamService: livestreamService,
-		cfg:               cfg,
-	}
+	// Complete the server initialization
+	server.App = app
+	server.db = db
+	server.userService = userService
+	server.jwtService = jwtService
+	server.videoService = videoService
+	server.livestreamService = livestreamService
 
 	// Apply middleware
 	server.applyMiddleware()
@@ -89,18 +101,35 @@ func (s *FiberServer) applyMiddleware() {
 
 // AuthMiddleware returns the authentication middleware
 func (s *FiberServer) authMiddleware(c *fiber.Ctx) error {
-	return s.jwtService.Middleware()(c)
+	err := s.jwtService.Middleware()(c)
+	if err != nil {
+		log.Printf("Authentication failed for %s %s: %v", c.Method(), c.Path(), err)
+		return err
+	}
+	return nil
 }
 
-// Custom error handler
-func customErrorHandler(c *fiber.Ctx, err error) error {
+// Custom error handler (now a method of FiberServer)
+func (s *FiberServer) customErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
 
 	if e, ok := err.(*fiber.Error); ok {
 		code = e.Code
 	}
 
+	// Log important errors only
+	if code >= 500 || code == fiber.StatusRequestEntityTooLarge {
+		log.Printf("Error %d on %s %s: %v", code, c.Method(), c.Path(), err)
+	}
+
+	// Provide more helpful error messages for common issues
+	errorMsg := err.Error()
+	if code == fiber.StatusRequestEntityTooLarge {
+		maxSizeMB := s.maxFileSize / (1024 * 1024)
+		errorMsg = fmt.Sprintf("File too large. Maximum allowed size is %dMB for video uploads.", maxSizeMB)
+	}
+
 	return c.Status(code).JSON(fiber.Map{
-		"error": err.Error(),
+		"error": errorMsg,
 	})
 }

@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/contexts/AuthContext';
 import axios from 'axios';
 import { API_BASE_URL } from '@/config/api';
+import { Image } from 'expo-image';
 
 const { width } = Dimensions.get('window');
 
@@ -82,10 +83,12 @@ const formatViews = (views: number) => {
 const VideoCard = ({ item }: { item: any }) => (
   <TouchableOpacity style={styles.videoCard}>
     <View style={styles.thumbnail}>
-      <View style={styles.durationBadge}>
-        <Text style={styles.durationText}>{item.duration}</Text>
-      </View>
-      <Text style={styles.placeholderText}>🎬</Text>
+      <Image 
+        source={{ uri: `${API_BASE_URL}/thumbnail/${item.id}` }}
+        style={styles.thumbnail}
+        contentFit="cover"
+        placeholder={{ blurhash: 'L6PZfSi_.AyE_3t7t7R**0o#DgR4' }} // optional placeholder
+      />
     </View>
     <View style={styles.videoInfo}>
       <Text style={styles.videoTitle} numberOfLines={2}>{item.title}</Text>
@@ -151,7 +154,7 @@ export default function ProfileScreen() {
             return {
               id: video.ID,
               title: video.Title,
-              thumbnail: null,
+              thumbnail: video.ThumbnailPath,
               createdAt: video.CreatedAt,
               duration: formatDuration(durationSeconds),
               views: video.ViewCount || 0,

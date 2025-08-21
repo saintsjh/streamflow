@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
 import axios from 'axios';
 import { API_BASE_URL } from '@/config/api';
-
+import { Image } from 'expo-image';
 const { width } = Dimensions.get('window');
 
 // Mock data for recently viewed content (stored locally)
@@ -103,10 +103,12 @@ const RecentlyViewedCard = ({ item, onPress }: { item: any; onPress: () => void 
 const TrendingCard = ({ item, onPress }: { item: any; onPress: () => void }) => (
   <TouchableOpacity style={styles.trendingCard} onPress={onPress}>
     <View style={styles.trendingCardThumbnail}>
-      <Text style={styles.placeholderIcon}>🔥</Text>
-      <View style={styles.durationBadge}>
-        <Text style={styles.durationText}>{item.duration}</Text>
-      </View>
+    <Image 
+      source={{ uri: `${API_BASE_URL}/thumbnail/${item.id}` }}
+      style={styles.trendingCardThumbnail}
+      contentFit="cover"
+      placeholder={{ blurhash: 'L6PZfSi_.AyE_3t7t7R**0o#DgR4' }} // optional placeholder
+    />
     </View>
     <View style={styles.trendingCardInfo}>
       <Text style={styles.trendingCardTitle} numberOfLines={2}>{item.title}</Text>
@@ -198,6 +200,7 @@ export default function HomeScreen() {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
       ]);
+      console.log('videosData', videosData);
 
       const trendingData = [];
 
@@ -209,6 +212,7 @@ export default function HomeScreen() {
           views: video.ViewCount || video.views || 0,
           trending: true,
           duration: formatDuration(video.Metadata?.Duration || video.duration || 0),
+          thumbnail: video.ThumbnailPath || video.thumbnail,
           type: 'video',
         }));
         trendingData.push(...formattedVideos);

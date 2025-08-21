@@ -46,7 +46,9 @@ func NewVideoService(db *mongo.Database) *VideoService {
 
 // CreateVideo now accepts a primitive.ObjectID for the userID and includes it in the new video document.
 func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, description string, userID primitive.ObjectID, thumbnail io.Reader) (*Video, error) {
+	log.Printf("CreateVideo called for user %s with title '%s'", userID.Hex(), title)
 	videoID := primitive.NewObjectID()
+	log.Printf("Generated new video ID: %s", videoID.Hex())
 	newVideo := &Video{
 		ID:          videoID,
 		Title:       title,
@@ -84,14 +86,17 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("failed to save file to GridFS and temp file: %w", err)
 	}
+	log.Println("Finished writing video to GridFS and temp file")
 
 	// Detect corrupt video file from the temporary file
+	log.Println("Detecting corrupt video...")
 	if err := DetectCorruptVideo(tempFilePath); err != nil {
 		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("video file validation failed: %w", err)
 	}
 
 	// Extract video metadata from the temporary file
+	log.Println("Extracting video metadata...")
 	metadata, err := ExtractVideoMetadata(tempFilePath)
 	if err != nil {
 		CleanupFailedUpload(tempFilePath)
@@ -99,6 +104,7 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 	}
 
 	// Validate extracted metadata
+	log.Println("Validating video metadata...")
 	if err := ValidateVideoMetadata(metadata); err != nil {
 		CleanupFailedUpload(tempFilePath)
 		return nil, fmt.Errorf("video metadata validation failed: %w", err)
@@ -111,16 +117,14 @@ func (s *VideoService) CreateVideo(ctx context.Context, file io.Reader, title, d
 		var err error
 		thumbnailGridFSID, err = s.uploadThumbnail(thumbnail, videoID)
 		if err != nil {
-			log.Printf("Failed to upload provided thumbnail: %v", err)
-			// Proceed without a thumbnail if upload fails
+			log.Printf("Failed to upload thumbnail for video %s: %v", videoID.Hex(), err)
 		}
 	} else {
 		// Generate thumbnail from video
 		var err error
 		thumbnailGridFSID, err = s.generateAndUploadThumbnail(tempFilePath, videoID)
 		if err != nil {
-			log.Printf("Failed to generate or upload thumbnail: %v", err)
-			// Don't fail the upload if thumbnail generation fails, but log it.
+			log.Printf("Failed to generate thumbnail for video %s: %v", videoID.Hex(), err)
 		}
 	}
 
@@ -193,14 +197,24 @@ func (s *VideoService) generateAndUploadThumbnail(videoPath string, videoID prim
 
 func (s *VideoService) uploadThumbnail(thumbnail io.Reader, videoID primitive.ObjectID) (primitive.ObjectID, error) {
 	thumbnailID := primitive.NewObjectID()
+
+	if thumbnail == nil {
+		return primitive.NilObjectID, fmt.Errorf("thumbnail reader is nil")
+	}
+
 	uploadStream, err := s.fs.OpenUploadStreamWithID(thumbnailID, fmt.Sprintf("%s_thumbnail.jpg", videoID.Hex()))
 	if err != nil {
 		return primitive.NilObjectID, fmt.Errorf("failed to open GridFS upload stream for thumbnail: %w", err)
 	}
-	defer uploadStream.Close()
 
-	if _, err := io.Copy(uploadStream, thumbnail); err != nil {
+	_, err = io.Copy(uploadStream, thumbnail)
+	if err != nil {
+		uploadStream.Close()
 		return primitive.NilObjectID, fmt.Errorf("failed to upload thumbnail to GridFS: %w", err)
+	}
+
+	if err := uploadStream.Close(); err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to close thumbnail upload stream: %w", err)
 	}
 
 	return thumbnailID, nil

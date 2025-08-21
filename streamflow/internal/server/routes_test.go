@@ -104,7 +104,7 @@ func setupTestServer() {
 
 	// Create test server
 	testServer = &FiberServer{
-		App:               fiber.New(fiber.Config{ErrorHandler: customErrorHandler}),
+		App:               fiber.New(fiber.Config{ErrorHandler: testServer.customErrorHandler}),
 		db:                testDB,
 		userService:       testUserService,
 		jwtService:        testJWTService,

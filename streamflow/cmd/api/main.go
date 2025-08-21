@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"streamflow/internal/config"
 	"streamflow/internal/server"
@@ -37,6 +38,13 @@ func gracefulShutdown(fiberServer *server.FiberServer, done chan bool) {
 }
 
 func main() {
+    // Configure logging for better visibility
+    log.SetOutput(os.Stderr)
+    log.SetFlags(log.LstdFlags | log.Lshortfile)
+    
+    // Initial log message to confirm logging is working
+    log.Println("=== StreamFlow Server Starting ===")
+    
     // Load configuration from environment variables
     cfg, err := config.LoadConfig()
     if err != nil {
@@ -52,6 +60,8 @@ func main() {
     log.Printf("Server starting on %s:%d", cfg.Server.Host, cfg.Server.Port)
     log.Printf("Database: %s", cfg.Database.Host)
     log.Printf("Video upload path: %s", cfg.Video.UploadPath)
+    log.Printf("Max video file size: %dMB", cfg.Video.MaxFileSize/(1024*1024))
+    log.Printf("Max request body size: %dMB (includes form overhead)", (cfg.Video.MaxFileSize+10*1024*1024)/(1024*1024))
 
     // Create server with configuration
     server := server.New(cfg)

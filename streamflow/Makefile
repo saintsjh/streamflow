@@ -11,7 +11,8 @@ build:
 
 # Run the application
 run:
-	@go run cmd/api/main.go
+	@echo "Starting StreamFlow server..."
+	go run cmd/api/main.go
 # Create DB container
 docker-run:
 	@if docker compose up --build 2>/dev/null; then \
